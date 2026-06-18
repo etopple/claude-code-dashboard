@@ -4,8 +4,13 @@
   "description": "Silent observer for Claude Code: passthrough API proxy + transcript tailer + live dashboard",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "demo": "node bin/demo.js",
+    "check": "node bin/check.js"
   },
   "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "private": true
 }
