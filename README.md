@@ -1,0 +1,78 @@
+# Claude Code Dashboard (cc-scope)
+
+Silent observer for Claude Code: a passthrough API proxy + transcript tailer + live dashboard.
+Built to answer one question: **what is Claude Code actually doing during those long autonomous runs?**
+
+## How it works
+
+```
+claude (CLI) ──ANTHROPIC_BASE_URL──▶ proxy :4000 ──HTTPS──▶ api.anthropic.com
+                                       │ tee (never blocks traffic)
+                                       ▼
+                              capture pipeline ──▶ logs/<date>/wire.jsonl
+                                       │
+~/.claude/projects/**/*.jsonl ──tail──▶ store (join on requestId)
+                                       │
+                                       ▼
+                              dashboard :4001  (live via SSE)
+```
+
+Two independent data sources, joined exactly:
+
+- **Wire captures** — full API round-trips (system prompt, message array, tools offered, streaming events reconstructed, timings). Only present when you launch Claude Code via `ccspy`.
+- **Transcripts** — Claude Code's own session JSONL (turns, tool calls, sub-agent sidechains, token usage). Present for *every* session, proxied or not.
+
+The transcript's `requestId` equals the API's `request-id` response header — that's the join key.
+
+## Usage
+
+```cmd
+bin\ccspy.cmd -p "do the thing"     :: or just: ccspy <any claude args>
+```
+
+`ccspy` starts the server if needed, sets `ANTHROPIC_BASE_URL=http://127.0.0.1:4000`, and runs `claude`
+with all your arguments. Plain `claude` is never touched — observation is opt-in per invocation.
+
+Dashboard: **http://127.0.0.1:4001**
+
+Run the server standalone: `node server.js` (env: `CCSCOPE_PROXY_PORT`, `CCSCOPE_DASH_PORT`, `CCSCOPE_BACKFILL_HOURS`).
+
+## Two views
+
+- **Dashboard** (`/`) — the after-the-fact analytics: waterfall, tool counts, inspector, tokens. Works for every session (proxied or not).
+- **Live console** (`/live`) — watch a turn stream **token-by-token as it happens**: thinking summary, each tool call with its arguments typing in, the result when it lands, then the assistant text. Only populated for sessions run through `ccspy` (it needs the live proxy stream). Linked from the dashboard header.
+
+## Live console
+
+The "watch it think" view. Each proxied `/v1/messages` turn renders as a card:
+
+- 🧠 **thinking** — streams live if Claude Code requested summarized thinking; otherwise shows "thought for Ns (summary omitted)".
+- 🔧 **tool call** — tool name + arguments streaming in, then `awaiting result…`, then ✓/✗ with the result size once the next turn's request carries the `tool_result`.
+- 💬 **text** — the assistant's reply, streaming.
+- footer — stop reason + token usage per turn.
+
+Claude Code housekeeping turns (title generation, quota pings — they offer zero tools) are filtered out so you only see real agent work. A blinking cursor marks the block that's actively streaming. `?replay=<jsonl>` renders a captured stream statically (dev aid).
+
+## Dashboard
+
+- **Autonomy banner** — turns since last human input, max streak, sub-agent spawns, top repeated identical call. The "Ralph loop detector": a true batch loop shows as a hot repeated-call counter; a normal agentic run shows as a high autonomous-turn streak with varied tool calls.
+- **Session gallery** — every session as a card with a **barcode strip**: one bar per turn (amber = tool call, green = answer, cyan = sub-agent, red = error) and a tick for each human input. Cards are grouped into tiers — **Marathon** (60+ turns), **Autonomous** (15+ unbroken chain — the loop-watch tier), **Mixed** (human-guided), **Quick**. Each card shows `N turns · chain K · $cost · date`, where *chain* is the longest run with no human input. A long mostly-amber barcode = a long autonomous run. Click a card to select it (updates the panels below); click a bar to open that turn in the inspector; hover for turn type.
+- **Inspector** — overview / raw request (system prompt, full context) / reconstructed response (thinking, text, tool_use) / raw wire record.
+- **Tool calls** — counts per tool; repeated-identical-call list (hash of name+input).
+- **Tokens** — per-turn output bars, cumulative usage, cache-hit ratio, estimated cost (edit `public/pricing.json`).
+- **Account-wide (Console)** — *optional, separate data source.* Aggregate cost/usage across your whole Anthropic **API organization** (every machine, web, etc.), pulled from the Console Cost Report API. Set `CCSCOPE_ADMIN_KEY` to a Console Admin key (`sk-ant-admin…`) and restart. Without it the panel shows setup instructions. Note: this is **API-org** billing — a Claude.ai Pro/Max subscription is billed separately and is not exposed by this API.
+
+## Scope — what each view covers
+
+- **Local CLI history** (gallery, tokens, tools) — reads `~/.claude/projects/` on this machine. By default loads **all** history; set `CCSCOPE_BACKFILL_HOURS=24` to limit to recent. Covers every local Claude Code CLI session, proxied or not.
+- **Wire detail** (inspector, live console, timings) — only sessions launched via `ccspy` on this machine.
+- **Account-wide** (Console panel) — org-level totals across everything, via Admin key. The only view that isn't local.
+- Not captured anywhere: other machines' transcripts, Claude Code on the web/desktop app, cloud agents.
+
+## Notes & caveats
+
+- **Auth headers are scrubbed** (`authorization`, `x-api-key`, `cookie`) before anything is persisted or displayed. Wire logs still contain full prompts/responses — treat `logs/` as sensitive.
+- The proxy strips `accept-encoding` upstream so captures stay plain-text. That is its only request modification.
+- Behind a TLS-inspecting proxy (corporate root CA, Cloudflare WARP, Zscaler, etc.)? Set `NODE_EXTRA_CA_CERTS` to your root CA PEM. The launchers also auto-detect the Cloudflare WARP cert (`C:\ProgramData\Cloudflare\installed_cert.pem`) if it's present and the var isn't already set.
+- Sessions not run through `ccspy` still appear on the dashboard (transcript side only) — no wire timings, bars drawn dim at their transcript timestamps.
+- Zero npm dependencies; no build step.

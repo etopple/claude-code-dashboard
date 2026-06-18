@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# ccspy — run Claude Code through the cc-scope observation proxy.
+set -u
+CCSCOPE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Behind a TLS-inspecting proxy? Set NODE_EXTRA_CA_CERTS to your root CA PEM.
+# Otherwise auto-detect the Cloudflare WARP cert if it happens to be present.
+WARP_CERT="/c/ProgramData/Cloudflare/installed_cert.pem"
+[ -z "${NODE_EXTRA_CA_CERTS:-}" ] && [ -f "$WARP_CERT" ] && export NODE_EXTRA_CA_CERTS="C:\\ProgramData\\Cloudflare\\installed_cert.pem"
+
+ping_ok() { node -e "fetch('http://127.0.0.1:4001/api/ping').then(()=>process.exit(0)).catch(()=>process.exit(1))" >/dev/null 2>&1; }
+
+if ! ping_ok; then
+  echo "[ccspy] starting cc-scope server..."
+  (node "$CCSCOPE_DIR/server.js" >/dev/null 2>&1 &)
+  for _ in $(seq 1 10); do ping_ok && break; sleep 0.5; done
+fi
+
+echo "[ccspy] dashboard: http://127.0.0.1:4001"
+ANTHROPIC_BASE_URL=http://127.0.0.1:4000 exec claude "$@"

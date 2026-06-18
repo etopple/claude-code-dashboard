@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CC·SCOPE — live console</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230b0a08'/%3E%3Ccircle cx='8' cy='8' r='5' fill='none' stroke='%237dd87d' stroke-width='1.5'/%3E%3Ccircle cx='8' cy='8' r='1.6' fill='%237dd87d'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;600;800&family=Spline+Sans+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="live-body">
+
+<header id="topbar">
+  <div class="wordmark">
+    <span class="scope-dot" id="liveDot"></span>
+    <h1>CC·SCOPE</h1>
+    <span class="tagline">live console · stream of consciousness</span>
+  </div>
+  <div class="topbar-controls">
+    <span id="streamState" class="conn">idle</span>
+    <label class="follow-toggle"><input type="checkbox" id="autoScroll" checked><span>auto-scroll</span></label>
+    <button id="clearFeed" class="navbtn">clear</button>
+    <a href="/" class="navbtn">◂ dashboard</a>
+    <span id="connState" class="conn">connecting…</span>
+  </div>
+</header>
+
+<div id="feed" class="feed">
+  <div id="waiting" class="waiting">
+    <p>waiting for a live turn…</p>
+    <p class="hint">run Claude Code through <code>ccspy</code> and each API turn will stream here token-by-token as the model thinks and acts.</p>
+  </div>
+</div>
+
+<script src="live.js"></script>
+</body>
+</html>

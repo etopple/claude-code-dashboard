@@ -1,0 +1,11 @@
+{
+  "_note": "USD per 1M tokens, matched by model-id PREFIX (so 'claude-opus-4' matches 'claude-opus-4-x'). cacheWrite ~1.25x input (5-min TTL); use ~2x for 1h TTL. cacheRead ~0.1x input. These are example list prices — edit freely to match your plan.",
+  "claude-opus-4": { "input": 15.0, "output": 75.0, "cacheWrite": 18.75, "cacheRead": 1.5 },
+  "claude-sonnet-4": { "input": 3.0, "output": 15.0, "cacheWrite": 3.75, "cacheRead": 0.3 },
+  "claude-haiku-4": { "input": 1.0, "output": 5.0, "cacheWrite": 1.25, "cacheRead": 0.1 },
+  "claude-3-7-sonnet": { "input": 3.0, "output": 15.0, "cacheWrite": 3.75, "cacheRead": 0.3 },
+  "claude-3-5-sonnet": { "input": 3.0, "output": 15.0, "cacheWrite": 3.75, "cacheRead": 0.3 },
+  "claude-3-5-haiku": { "input": 0.8, "output": 4.0, "cacheWrite": 1.0, "cacheRead": 0.08 },
+  "claude-3-opus": { "input": 15.0, "output": 75.0, "cacheWrite": 18.75, "cacheRead": 1.5 },
+  "claude-3-haiku": { "input": 0.25, "output": 1.25, "cacheWrite": 0.3, "cacheRead": 0.03 }
+}

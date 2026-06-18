@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CC·SCOPE — Claude Code flight recorder</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230b0a08'/%3E%3Ccircle cx='8' cy='8' r='5' fill='none' stroke='%23ffb000' stroke-width='1.5'/%3E%3Ccircle cx='8' cy='8' r='1.6' fill='%23ffb000'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;600;800&family=Spline+Sans+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="wordmark">
+    <span class="scope-dot" id="liveDot"></span>
+    <h1>CC·SCOPE</h1>
+    <span class="tagline">claude code flight recorder</span>
+  </div>
+  <div class="topbar-controls">
+    <div class="viewtabs" id="viewtabs">
+      <button data-view="session" class="on">session</button>
+      <button data-view="daily">daily</button>
+      <button data-view="roi">roi</button>
+    </div>
+    <label class="follow-toggle"><input type="checkbox" id="followLive" checked><span>follow live</span></label>
+    <select id="sessionPicker" title="session"></select>
+    <a href="/live" class="navbtn">live console ▸</a>
+    <span id="connState" class="conn">connecting…</span>
+  </div>
+</header>
+
+<section id="autonomy" class="panel reveal view-session">
+  <div class="autonomy-main">
+    <div class="autonomy-counter">
+      <span class="big" id="streakNow">0</span>
+      <span class="lbl">turns since last<br>human input</span>
+    </div>
+    <div class="autonomy-status" id="autonomyStatus">—</div>
+  </div>
+  <div class="autonomy-cells">
+    <div class="cell"><span class="v" id="streakMax">0</span><span class="k">max streak</span></div>
+    <div class="cell"><span class="v" id="userInputs">0</span><span class="k">human inputs</span></div>
+    <div class="cell"><span class="v" id="subagents">0</span><span class="k">sub-agent spawns</span></div>
+    <div class="cell"><span class="v" id="sidechain">0</span><span class="k">sidechain turns</span></div>
+    <div class="cell warn-cell"><span class="v" id="repeatMax">—</span><span class="k">top repeated call</span></div>
+  </div>
+</section>
+
+<section id="metrics" class="strip reveal view-session">
+  <div class="m"><span class="v" id="mTurns">0</span><span class="k">api turns</span></div>
+  <div class="m"><span class="v" id="mTools">0</span><span class="k">tool calls</span></div>
+  <div class="m"><span class="v" id="mDuration">—</span><span class="k">session span</span></div>
+  <div class="m"><span class="v" id="mIn">0</span><span class="k">input tok</span></div>
+  <div class="m"><span class="v" id="mOut">0</span><span class="k">output tok</span></div>
+  <div class="m"><span class="v" id="mCacheR">0</span><span class="k">cache read</span></div>
+  <div class="m"><span class="v" id="mCacheW">0</span><span class="k">cache write</span></div>
+  <div class="m"><span class="v" id="mHit">—</span><span class="k">cache hit</span></div>
+  <div class="m accent"><span class="v" id="mCost">—</span><span class="k">est. cost</span></div>
+</section>
+
+<main class="view-session">
+  <section class="panel reveal" id="galleryPanel">
+    <div class="panel-head">
+      <h2>sessions</h2>
+      <span class="legend">
+        <i class="sw tool_use"></i>tool
+        <i class="sw end_turn"></i>answer
+        <i class="sw sidechain"></i>sub-agent
+        <i class="sw error"></i>error
+        <i class="sw user"></i>human
+      </span>
+    </div>
+    <div id="gallery"></div>
+    <div id="galTip" class="tooltip" hidden></div>
+  </section>
+
+  <aside class="side">
+    <section class="panel reveal" id="acctPanel">
+      <div class="panel-head"><h2>account-wide · console</h2><span id="acctRange" class="sub"></span></div>
+      <div id="acct" class="acct"></div>
+    </section>
+    <section class="panel reveal">
+      <div class="panel-head"><h2>tool calls</h2><span id="toolTotal" class="sub"></span></div>
+      <div id="toolBars" class="tool-bars"></div>
+    </section>
+    <section class="panel reveal">
+      <div class="panel-head"><h2>repeated identical calls</h2></div>
+      <div id="repeats" class="repeats"></div>
+    </section>
+    <section class="panel reveal">
+      <div class="panel-head"><h2>tokens / turn</h2></div>
+      <canvas id="tokenChart" height="120"></canvas>
+    </section>
+  </aside>
+</main>
+
+<section id="dailyView" class="view-daily">
+  <section class="strip reveal" id="dailyTotals">
+    <div class="m accent"><span class="v" id="dTotCost">—</span><span class="k">total cost</span></div>
+    <div class="m"><span class="v" id="dTotIn">0</span><span class="k">input tok</span></div>
+    <div class="m"><span class="v" id="dTotOut">0</span><span class="k">output tok</span></div>
+    <div class="m"><span class="v" id="dTotCacheR">0</span><span class="k">cache read</span></div>
+    <div class="m"><span class="v" id="dTotCacheW">0</span><span class="k">cache write</span></div>
+    <div class="m"><span class="v" id="dTotTurns">0</span><span class="k">api turns</span></div>
+    <div class="m"><span class="v" id="dTotSessions">0</span><span class="k">sessions</span></div>
+    <div class="m"><span class="v" id="dTotDays">0</span><span class="k">days</span></div>
+  </section>
+  <div class="daily-main">
+    <section class="panel reveal" id="dailyPanel">
+      <div class="panel-head"><h2>cost / day</h2><span id="dailyRange" class="sub"></span></div>
+      <canvas id="dailyChart" height="140"></canvas>
+      <div id="dailyTable" class="daily-table"></div>
+    </section>
+    <aside class="side">
+      <section class="panel reveal">
+        <div class="panel-head"><h2>by model · whole range</h2></div>
+        <div id="dailyByModel" class="acct-bars dm-bars"></div>
+      </section>
+      <section class="panel reveal">
+        <div class="panel-head"><h2>basis</h2></div>
+        <div class="daily-note">
+          <p>Every API turn across <b>all</b> local sessions, bucketed by local calendar day. Range shown next to "cost / day" — this is your <b>whole local history</b>, not today.</p>
+          <p>Cost uses <code>pricing.json</code> (cache priced at the discounted rate). Cache-read tokens dwarf real spend — watch <b>output</b> + <b>input</b>.</p>
+        </div>
+      </section>
+    </aside>
+  </div>
+</section>
+
+<section id="roiView" class="view-roi">
+  <section class="panel reveal" id="roiAssume">
+    <div class="panel-head"><h2>assumptions · your call</h2><span id="roiSrc" class="sub"></span></div>
+    <div class="roi-knobs">
+      <label>effective rate <span class="unit">$/hr</span><input id="roiRate" type="number" min="0" step="25" value="250"></label>
+      <label>min / edit <input id="roiEdit" type="number" min="0" step="1" value="4"></label>
+      <label>min / command <input id="roiCmd" type="number" min="0" step="1" value="1"></label>
+      <label>min / ask <input id="roiAsk" type="number" min="0" step="1" value="5"></label>
+      <button id="roiReset" class="navbtn" title="clear knobs + manual ratings">reset</button>
+    </div>
+  </section>
+
+  <section class="strip reveal" id="roiHeadline">
+    <div class="m accent2"><span class="v" id="roiHours">—</span><span class="k">hours reclaimed</span></div>
+    <div class="m accent2"><span class="v" id="roiValue">—</span><span class="k">est. value</span></div>
+    <div class="m accent"><span class="v" id="roiMult">—</span><span class="k">leverage (value ÷ cost)</span></div>
+    <div class="m accent2"><span class="v" id="roiNet">—</span><span class="k">net roi (value − cost)</span></div>
+    <div class="m"><span class="v" id="roiOutput">—</span><span class="k">edits / commands</span></div>
+    <div class="m"><span class="v" id="roiCostRef">—</span><span class="k">token cost</span></div>
+  </section>
+
+  <div class="daily-main">
+    <section class="panel reveal" id="roiProjPanel">
+      <div class="panel-head"><h2>by project</h2><span class="sub">where the leverage went</span></div>
+      <div id="roiProjects" class="daily-table"></div>
+      <div class="panel-head" style="border-top:1px solid var(--line)"><h2>sessions · rate to override the estimate</h2><span class="sub">type hours to replace the auto-estimate</span></div>
+      <div id="roiSessions" class="daily-table"></div>
+    </section>
+    <aside class="side">
+      <section class="panel reveal">
+        <div class="panel-head"><h2>how this works</h2></div>
+        <div class="daily-note">
+          <p><b>Telemetry can't prove value</b> — only cost and leverage. So ROI = <span class="burn-k">your assumptions</span> × measured output, shown transparently.</p>
+          <p><b>Auto-estimate</b> (default): hours ≈ (edits×min/edit + commands×min/command + asks×min/ask). Tune the knobs above — they're saved in this browser.</p>
+          <p><b>Override</b> per session: type the real hours it saved in the sessions table; that replaces the estimate for that row. <span class="burn-k">●</span> = rated by you.</p>
+          <p>value = hours × rate. <code>leverage</code> = value ÷ token cost. Nothing here is fabricated — the knobs are visible and yours.</p>
+          <p class="muted">Estimates and per-session ratings are stored in this browser only (localStorage).</p>
+        </div>
+      </section>
+    </aside>
+  </div>
+</section>
+
+<div id="inspector" class="inspector" hidden>
+  <div class="inspector-card">
+    <div class="inspector-head">
+      <h2 id="insTitle">turn</h2>
+      <div class="tabs">
+        <button data-tab="overview" class="on">overview</button>
+        <button data-tab="request">request</button>
+        <button data-tab="response">response</button>
+        <button data-tab="raw">raw</button>
+      </div>
+      <button id="insClose" class="x" title="close">✕</button>
+    </div>
+    <div id="insBody" class="inspector-body"></div>
+  </div>
+</div>
+
+<footer>
+  <span>proxy <code>http://127.0.0.1:4000</code> → <code>api.anthropic.com</code></span>
+  <span id="wireCount">0 wire captures</span>
+  <span>run via <code>ccspy</code> · transcripts tailed from <code>~/.claude/projects</code></span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "cc-scope",
+  "version": "0.1.0",
+  "description": "Silent observer for Claude Code: passthrough API proxy + transcript tailer + live dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT",
+  "private": true
+}
