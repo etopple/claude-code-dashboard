@@ -24,10 +24,24 @@ Two independent data sources, joined exactly:
 
 The transcript's `requestId` equals the API's `request-id` response header — that's the join key.
 
+## Try it in 60 seconds
+
+```bash
+git clone https://github.com/etopple/claude-code-dashboard
+cd claude-code-dashboard
+npm run demo
+```
+
+Then open **http://127.0.0.1:4001**. Demo mode points the dashboard at `fixtures/claude-projects`, a tiny synthetic Claude Code transcript with tool calls, token usage, and repeated-call data. No real Claude Code history or API key is required.
+
 ## Usage
 
 ```cmd
 bin\ccspy.cmd -p "do the thing"     :: or just: ccspy <any claude args>
+```
+
+```bash
+bin/ccspy -p "do the thing"         # or just: ccspy <any claude args>
 ```
 
 `ccspy` starts the server if needed, sets `ANTHROPIC_BASE_URL=http://127.0.0.1:4000`, and runs `claude`
@@ -35,7 +49,7 @@ with all your arguments. Plain `claude` is never touched — observation is opt-
 
 Dashboard: **http://127.0.0.1:4001**
 
-Run the server standalone: `node server.js` (env: `CCSCOPE_PROXY_PORT`, `CCSCOPE_DASH_PORT`, `CCSCOPE_BACKFILL_HOURS`).
+Run the server standalone: `node server.js` (env: `CCSCOPE_PROXY_PORT`, `CCSCOPE_DASH_PORT`, `CCSCOPE_BACKFILL_HOURS`, `CCSCOPE_TRANSCRIPT_ROOT`).
 
 ## Two views
 
@@ -64,10 +78,19 @@ Claude Code housekeeping turns (title generation, quota pings — they offer zer
 
 ## Scope — what each view covers
 
-- **Local CLI history** (gallery, tokens, tools) — reads `~/.claude/projects/` on this machine. By default loads **all** history; set `CCSCOPE_BACKFILL_HOURS=24` to limit to recent. Covers every local Claude Code CLI session, proxied or not.
+- **Local CLI history** (gallery, tokens, tools) — reads `CCSCOPE_TRANSCRIPT_ROOT` if set, otherwise `~/.claude/projects/` on this machine. By default loads **all** history; set `CCSCOPE_BACKFILL_HOURS=24` to limit to recent. Covers every local Claude Code CLI session, proxied or not.
 - **Wire detail** (inspector, live console, timings) — only sessions launched via `ccspy` on this machine.
 - **Account-wide** (Console panel) — org-level totals across everything, via Admin key. The only view that isn't local.
 - Not captured anywhere: other machines' transcripts, Claude Code on the web/desktop app, cloud agents.
+
+## First-run troubleshooting
+
+- **Dashboard is blank** — no transcript JSONL files were found. Try `npm run demo`, or set `CCSCOPE_TRANSCRIPT_ROOT` to a directory containing Claude Code transcript files.
+- **`/live` is blank** — launch Claude through `ccspy`; plain `claude` sessions only populate transcript-side dashboard views.
+- **No request/response/raw wire tabs** — that session was not proxied through `ccspy`, so only transcript-side data is available.
+- **Port already in use** — set `CCSCOPE_DASH_PORT` and/or `CCSCOPE_PROXY_PORT` before starting the server.
+- **Corporate TLS proxy/WARP/Zscaler errors** — set `NODE_EXTRA_CA_CERTS` to the proxy root CA PEM.
+- **Cost looks wrong** — edit `public/pricing.json`; prices are examples matched by model-id prefix.
 
 ## Notes & caveats
 
@@ -76,3 +99,11 @@ Claude Code housekeeping turns (title generation, quota pings — they offer zer
 - Behind a TLS-inspecting proxy (corporate root CA, Cloudflare WARP, Zscaler, etc.)? Set `NODE_EXTRA_CA_CERTS` to your root CA PEM. The launchers also auto-detect the Cloudflare WARP cert (`C:\ProgramData\Cloudflare\installed_cert.pem`) if it's present and the var isn't already set.
 - Sessions not run through `ccspy` still appear on the dashboard (transcript side only) — no wire timings, bars drawn dim at their transcript timestamps.
 - Zero npm dependencies; no build step.
+
+## Development checks
+
+```bash
+npm run check
+```
+
+This runs `node --check` across the server, library files, browser scripts, and Node helper scripts.

@@ -22,7 +22,19 @@ Two data sources, joined on `requestId` = the API `request-id` header:
 
 ---
 
-## 2. Ingredients (prerequisites)
+## 2. Quick demo (no Claude history required)
+
+```bash
+git clone https://github.com/etopple/claude-code-dashboard
+cd claude-code-dashboard
+npm run demo
+```
+
+Open **http://127.0.0.1:4001**. The demo script sets `CCSCOPE_TRANSCRIPT_ROOT=fixtures/claude-projects` so the dashboard loads a synthetic transcript with tool calls, token usage, and repeated-call data.
+
+---
+
+## 3. Ingredients (prerequisites)
 
 | Need | This machine | Notes |
 |------|--------------|-------|
@@ -33,7 +45,7 @@ Two data sources, joined on `requestId` = the API `request-id` header:
 
 ---
 
-## 3. Setup on a fresh machine
+## 4. Setup on a fresh machine
 
 ```bash
 # clone (swap in your own fork/clone URL)
@@ -55,7 +67,7 @@ If WARP isn't installed/inspecting on that machine, the cert line in `bin/ccspy.
 
 ---
 
-## 4. Daily use
+## 5. Daily use
 
 Run anything you'd normally run with `claude`, but through `ccspy`:
 ```cmd
@@ -69,7 +81,7 @@ Dashboard: **http://127.0.0.1:4001**
 
 ---
 
-## 5. The four views
+## 6. The four views
 
 | View | URL | Covers | Needs ccspy? |
 |------|-----|--------|--------------|
@@ -80,13 +92,14 @@ Dashboard: **http://127.0.0.1:4001**
 
 ---
 
-## 6. Seasoning (env vars)
+## 7. Seasoning (env vars)
 
 Set before launching the server (or add to `bin/ccspy.cmd`).
 
 | Var | Default | Effect |
 |-----|---------|--------|
 | `CCSCOPE_BACKFILL_HOURS` | `0` (all history) | Limit transcript load, e.g. `24` or `168` (7d). Use to scope the Daily/ROI range. |
+| `CCSCOPE_TRANSCRIPT_ROOT` | `~/.claude/projects` | Alternate transcript directory. `npm run demo` points this at `fixtures/claude-projects`. |
 | `CCSCOPE_DASH_PORT` | `4001` | Dashboard port. |
 | `CCSCOPE_PROXY_PORT` | `4000` | Proxy port (must match `ANTHROPIC_BASE_URL`). |
 | `CCSCOPE_UPSTREAM` | `api.anthropic.com` | Upstream API host. |
@@ -96,8 +109,9 @@ Set before launching the server (or add to `bin/ccspy.cmd`).
 
 ---
 
-## 7. Gotchas (field-tested)
+## 8. Gotchas (field-tested)
 
+- **Blank first run.** If there are no local transcripts yet, run `npm run demo` first or set `CCSCOPE_TRANSCRIPT_ROOT` to a directory with `.jsonl` transcript files.
 - **You can't read Claude's internal thinking.** Claude Code requests `thinking:{type:"adaptive"}`, but the summarized thinking text is **omitted over the wire** — `/live` shows "thought for Ns (summary omitted)". You see tool calls, results, timings, and reasoning the model writes into its *answer*. Forcing `MAX_THINKING_TOKENS` costs ~20× output burn for no readable payoff. Don't.
 - **Daily/ROI = whole local history, not today.** Date range is shown; use `CCSCOPE_BACKFILL_HOURS` to shorten.
 - **ROI is a modeled number, not a measurement.** It's `hours × rate ÷ cost` where hours = your minute-knobs × output counts. Tune the knobs or rate individual sessions; the headline moves with your assumptions by design.
@@ -110,7 +124,7 @@ Set before launching the server (or add to `bin/ccspy.cmd`).
 
 ---
 
-## 8. Update / redeploy
+## 9. Update / redeploy
 
 ```bash
 cd C:/claude/cc-scope
@@ -127,11 +141,14 @@ Front-end edits (`public/*`) are served fresh on reload — no restart. Back-end
 
 ---
 
-## 9. File map
+## 10. File map
 
 ```
 server.js          HTTP: proxy wiring, dashboard routes, wire persistence
 bin/ccspy(.cmd)    launcher — sets env, starts server, runs claude
+bin/demo.js        cross-platform demo launcher using fixtures/claude-projects
+bin/check.js       cross-platform node --check runner
+fixtures/          synthetic transcript data for npm run demo
 lib/proxy.js       passthrough proxy + capture/live tee
 lib/sse.js         parse SSE, reconstruct full message from deltas
 lib/livestream.js  incremental SSE → live-console events

@@ -12,6 +12,7 @@ const state = {
   wireCount: 0,
   es: null,
   wireCache: new Map(),
+  transcriptRoot: '',
   renderQueued: false,
   daily: null,
   roi: null,
@@ -83,6 +84,12 @@ function setConn(text, cls) {
   $('liveDot').classList.toggle('live', cls === 'ok');
 }
 
+function updateTranscriptRoot() {
+  const el = $('transcriptRoot');
+  if (!el || !state.transcriptRoot) return;
+  el.innerHTML = `transcripts tailed from <code>${escapeHtml(state.transcriptRoot)}</code>`;
+}
+
 function upsertSession(summary) {
   const i = state.sessions.findIndex((s) => s.id === summary.id);
   if (i >= 0) state.sessions[i] = summary;
@@ -94,6 +101,8 @@ function handleEvent(ev) {
     case 'snapshot':
       state.sessions = ev.sessions;
       state.wireCount = ev.wireCount || 0;
+      state.transcriptRoot = ev.transcriptRoot || state.transcriptRoot;
+      updateTranscriptRoot();
       renderPicker();
       autoFollow();
       scheduleRender();

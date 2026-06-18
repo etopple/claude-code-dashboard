@@ -22,7 +22,23 @@ const BACKFILL_MS = Number(process.env.CCSCOPE_BACKFILL_HOURS || 0) * 60 * 60 * 
 const ROOT = __dirname;
 const LOG_ROOT = path.join(ROOT, 'logs');
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const TRANSCRIPT_ROOT = path.join(os.homedir(), '.claude', 'projects');
+const TRANSCRIPT_ROOT = process.env.CCSCOPE_TRANSCRIPT_ROOT
+  ? path.resolve(process.env.CCSCOPE_TRANSCRIPT_ROOT)
+  : path.join(os.homedir(), '.claude', 'projects');
+const TRANSCRIPT_ROOT_LABEL = displayPathForUi(TRANSCRIPT_ROOT);
+
+function displayPathForUi(value) {
+  const insideRepo = path.relative(ROOT, value);
+  if (insideRepo && !insideRepo.startsWith('..') && !path.isAbsolute(insideRepo)) return insideRepo.replace(/\\/g, '/');
+  if (!insideRepo) return '.';
+
+  const home = os.homedir();
+  const insideHome = path.relative(home, value);
+  if (insideHome && !insideHome.startsWith('..') && !path.isAbsolute(insideHome)) return ('~/' + insideHome).replace(/\\/g, '/');
+  if (!insideHome) return '~';
+
+  return value.replace(/\\/g, '/');
+}
 
 // ---------------------------------------------------------------- scrubbing
 const SCRUB_HEADERS = new Set(['authorization', 'x-api-key', 'cookie', 'set-cookie']);
@@ -169,7 +185,7 @@ const dashboard = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
 
-  if (p === '/api/ping') return sendJson(res, 200, { ok: true, wireCount: store.wireCount, sessions: store.sessions.size });
+  if (p === '/api/ping') return sendJson(res, 200, { ok: true, wireCount: store.wireCount, sessions: store.sessions.size, transcriptRoot: TRANSCRIPT_ROOT_LABEL });
 
   if (p === '/events') {
     res.writeHead(200, {
@@ -177,7 +193,7 @@ const dashboard = http.createServer((req, res) => {
       'cache-control': 'no-cache',
       'connection': 'keep-alive',
     });
-    res.write(`data: ${JSON.stringify({ type: 'snapshot', sessions: store.listSessions(), wireCount: store.wireCount })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'snapshot', sessions: store.listSessions(), wireCount: store.wireCount, transcriptRoot: TRANSCRIPT_ROOT_LABEL })}\n\n`);
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
     return;
