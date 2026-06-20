@@ -51,10 +51,16 @@ Dashboard: **http://127.0.0.1:4001**
 
 Run the server standalone: `node server.js` (env: `CCSCOPE_PROXY_PORT`, `CCSCOPE_DASH_PORT`, `CCSCOPE_BACKFILL_HOURS`, `CCSCOPE_TRANSCRIPT_ROOT`).
 
-## Two views
+## Views
 
-- **Dashboard** (`/`) — the after-the-fact analytics: waterfall, tool counts, inspector, tokens. Works for every session (proxied or not).
-- **Live console** (`/live`) — watch a turn stream **token-by-token as it happens**: thinking summary, each tool call with its arguments typing in, the result when it lands, then the assistant text. Only populated for sessions run through `ccspy` (it needs the live proxy stream). Linked from the dashboard header.
+Header tabs:
+
+- **Session** (`/`) — per-session analytics: autonomy banner, gallery, inspector, tool counts, tokens. Every session (proxied or not).
+- **Flounder** — tool-call failure taxonomy + error-rate-over-time (below).
+- **Live feed** — universal, hook-fed activity stream across every session/tool (below).
+- **Skills** — portable skill inventory across tools + gaps to build (below).
+- **Daily / ROI** — per-day cost roll-up and a leverage/ROI view.
+- **Live console** (`/live`) — watch a turn stream **token-by-token**: thinking, tool calls + args, results, text. Needs `ccspy` (the live proxy stream).
 
 ## Live console
 
@@ -70,11 +76,47 @@ Claude Code housekeeping turns (title generation, quota pings — they offer zer
 ## Dashboard
 
 - **Autonomy banner** — turns since last human input, max streak, sub-agent spawns, top repeated identical call. The "Ralph loop detector": a true batch loop shows as a hot repeated-call counter; a normal agentic run shows as a high autonomous-turn streak with varied tool calls.
-- **Session gallery** — every session as a card with a **barcode strip**: one bar per turn (amber = tool call, green = answer, cyan = sub-agent, red = error) and a tick for each human input. Cards are grouped into tiers — **Marathon** (60+ turns), **Autonomous** (15+ unbroken chain — the loop-watch tier), **Mixed** (human-guided), **Quick**. Each card shows `N turns · chain K · $cost · date`, where *chain* is the longest run with no human input. A long mostly-amber barcode = a long autonomous run. Click a card to select it (updates the panels below); click a bar to open that turn in the inspector; hover for turn type.
+- **Session gallery** — every session as a card with a **barcode strip**: one bar per turn (amber = tool call, green = answer, cyan = sub-agent, orange = tool error, red = API error) and a tick for each human input. Cards are grouped into tiers — **Marathon** (60+ turns), **Autonomous** (15+ unbroken chain — the loop-watch tier), **Mixed** (human-guided), **Quick**. Each card shows `N turns · chain K · $cost · date`, where *chain* is the longest run with no human input. A long mostly-amber barcode = a long autonomous run. Click a card to select it (updates the panels below); click a bar to open that turn in the inspector; hover for turn type.
 - **Inspector** — overview / raw request (system prompt, full context) / reconstructed response (thinking, text, tool_use) / raw wire record.
 - **Tool calls** — counts per tool; repeated-identical-call list (hash of name+input).
 - **Tokens** — per-turn output bars, cumulative usage, cache-hit ratio, estimated cost (edit `public/pricing.json`).
 - **Account-wide (Console)** — *optional, separate data source.* Aggregate cost/usage across your whole Anthropic **API organization** (every machine, web, etc.), pulled from the Console Cost Report API. Set `CCSCOPE_ADMIN_KEY` to a Console Admin key (`sk-ant-admin…`) and restart. Without it the panel shows setup instructions. Note: this is **API-org** billing — a Claude.ai Pro/Max subscription is billed separately and is not exposed by this API.
+
+## Flounder — tool-call failure taxonomy
+
+Most "errors" in long agent runs aren't model/API failures — they're fragile tool calls (bad shell, wrong path, raw cloud-CLI, empty searches retried as failures). **Flounder** classifies every tool result (from transcripts, so it covers *all* sessions) into a taxonomy — `shell_failure`, `stale_edit`, `file_not_found`, `validation`, `expected_empty`, `unknown_tool`, `webfetch_miss`, … — and shows:
+
+- headline error rate, errored calls, and **output tokens burned on errored turns**
+- per-tool error rate + a **retry-spiral** list (the same call failing 2+ times — the floundering signature)
+- **error rate over time** (daily, with a 7d-vs-prior delta) so a fix shows a measurable before/after
+- **gaps you need**: discipline-skill suggestions ranked by the failures they'd prevent
+
+Classes are heuristic; the detail panel shows real (secret-redacted) result previews so you can tune them.
+
+## Live feed — universal, hook-based
+
+The `/live` console needs the proxy. **Live feed** is fed by Claude Code **hooks** instead, so it lights up for *every* session and every tool — no proxy required. Point hooks at the dashboard's `/ingest` endpoint:
+
+```json
+// ~/.claude/settings.json
+{
+  "hooks": {
+    "PostToolUse":      [{ "hooks": [{ "type": "http", "url": "http://127.0.0.1:4001/ingest", "timeout": 5 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "http", "url": "http://127.0.0.1:4001/ingest", "timeout": 5 }] }],
+    "Stop":             [{ "hooks": [{ "type": "http", "url": "http://127.0.0.1:4001/ingest", "timeout": 5 }] }]
+  }
+}
+```
+
+`/ingest` accepts the raw hook JSON and shapes it server-side; result previews are secret-redacted and truncated. (`bin/cc-scope-hook.js` is included for setups that prefer a command hook.)
+
+## Skills — portable inventory
+
+`SKILL.md` (Agent Skills) is read by Claude Code, Codex, and Claude Cowork alike. **Skills** inventories yours across those tools — per-tool presence (`ok` / `staged` / `drift` / `missing`) and, cross-referenced with Flounder, which discipline skills you still *need*. Set `CCSCOPE_SKILLS_ROOT` to a canonical skills repo (a folder of `<name>/SKILL.md`) to track coverage against it; otherwise it scans the tools' skill dirs directly.
+
+## Digest
+
+`node bin/cc-scope-digest.js` prints a terse readout — floundering trend, top skill gap, coverage — for a daily briefing or scheduled task (`--json` for machine output).
 
 ## Scope — what each view covers
 

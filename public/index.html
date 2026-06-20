@@ -13,17 +13,22 @@
 <body>
 
 <header id="topbar">
-  <div class="wordmark">
-    <span class="scope-dot" id="liveDot"></span>
-    <h1>CC·SCOPE</h1>
-    <span class="tagline">claude code flight recorder</span>
-  </div>
-  <div class="topbar-controls">
+  <div class="topbar-left">
+    <div class="wordmark">
+      <span class="scope-dot" id="liveDot"></span>
+      <h1>CC·SCOPE</h1>
+      <span class="tagline">claude code flight recorder</span>
+    </div>
     <div class="viewtabs" id="viewtabs">
       <button data-view="session" class="on">session</button>
+      <button data-view="errors">flounder</button>
+      <button data-view="feed">live feed</button>
+      <button data-view="skills">skills</button>
       <button data-view="daily">daily</button>
       <button data-view="roi">roi</button>
     </div>
+  </div>
+  <div class="topbar-controls">
     <label class="follow-toggle"><input type="checkbox" id="followLive" checked><span>follow live</span></label>
     <select id="sessionPicker" title="session"></select>
     <a href="/live" class="navbtn">live console ▸</a>
@@ -68,7 +73,8 @@
         <i class="sw tool_use"></i>tool
         <i class="sw end_turn"></i>answer
         <i class="sw sidechain"></i>sub-agent
-        <i class="sw error"></i>error
+        <i class="sw toolerr"></i>tool error
+        <i class="sw error"></i>api error
         <i class="sw user"></i>human
       </span>
     </div>
@@ -172,6 +178,141 @@
   </div>
 </section>
 
+<section id="skillsView" class="view-skills">
+  <section class="strip reveal" id="skillsHeadline">
+    <div class="m"><span class="v" id="skTotal">0</span><span class="k">skills</span></div>
+    <div class="m"><span class="v" id="skClaude">0</span><span class="k">in claude</span></div>
+    <div class="m"><span class="v" id="skCodex">0</span><span class="k">in codex</span></div>
+    <div class="m"><span class="v" id="skCowork">0</span><span class="k">in cowork</span></div>
+    <div class="m accent3"><span class="v" id="skDrift">0</span><span class="k">drifted</span></div>
+    <div class="m accent3"><span class="v" id="skNeed">0</span><span class="k">gaps you need</span></div>
+    <div class="m"><span class="v" id="skCmds">0</span><span class="k">claude commands</span></div>
+  </section>
+
+  <div class="ob-layout">
+    <aside class="ob-index panel reveal">
+      <div class="panel-head"><h2>skills</h2><span class="sub" id="skIndexSub">portable inventory</span></div>
+      <div id="skList" class="ob-tools"></div>
+    </aside>
+
+    <section class="ob-main panel reveal">
+      <div class="panel-head"><h2>tool coverage</h2><span class="sub" id="skCanon">—</span></div>
+      <div id="skCards" class="ob-cards"></div>
+
+      <div class="panel-head" style="border-top:1px solid var(--line)"><h2>gaps you need</h2><span class="sub">discipline skills your FLOUNDER failures argue for</span></div>
+      <div id="skNeeded" class="ob-spirals"></div>
+
+      <div class="panel-head" style="border-top:1px solid var(--line)"><h2>claude commands</h2><span class="sub">slash-commands · claude-only, not synced</span></div>
+      <div id="skCommands" class="sk-cmds"></div>
+    </section>
+  </div>
+
+  <section class="panel reveal ob-detail" id="skDetailPanel">
+    <div class="panel-head"><h2 id="skDetailTitle">select a skill</h2><span class="sub" id="skDetailSub">click a skill to inspect · the OB1 fields map to SKILL.md</span></div>
+    <div class="ob-detail-grid">
+      <div class="ob-detail-col"><div class="ob-col-head">what it does</div><div id="skWhat" class="ob-col-body"></div></div>
+      <div class="ob-detail-col"><div class="ob-col-head">deployed to</div><div id="skDeployed" class="ob-col-body"></div></div>
+      <div class="ob-detail-col"><div class="ob-col-head">tags · status</div><div id="skTags" class="ob-col-body"></div></div>
+    </div>
+    <div id="skBody" class="ob-samples"></div>
+  </section>
+
+  <section class="panel reveal">
+    <div class="panel-head"><h2>portability</h2></div>
+    <div class="daily-note">
+      <p>One canonical repo (<code>agent-skills</code>) is the source of truth; <code>SKILL.md</code> is read by Claude Code, Codex, and Cowork alike. <span class="burn-k">ok</span> = deployed &amp; in sync · <span style="color:var(--orange)">drift</span> = a tool's copy diverged from canonical · missing = not deployed there.</p>
+      <p>Deploy / reconcile from the repo: <code>node skillsync.js sync --apply</code> (Codex copies in place; Cowork stages a bundle to upload). <code>skillsync drift</code> shows divergence. Gaps below are inferred from your error taxonomy — they don't exist yet.</p>
+    </div>
+  </section>
+</section>
+
+<section id="errorsView" class="view-errors">
+  <section class="strip reveal" id="errHeadline">
+    <div class="m accent3"><span class="v" id="eRate">—</span><span class="k">tool-call error rate</span></div>
+    <div class="m"><span class="v" id="eErrored">0</span><span class="k">errored calls</span></div>
+    <div class="m"><span class="v" id="eTotal">0</span><span class="k">total calls</span></div>
+    <div class="m accent3"><span class="v" id="eBurn">—</span><span class="k">out-tok on errored turns</span></div>
+    <div class="m"><span class="v" id="eTop">—</span><span class="k">top failure class</span></div>
+    <div class="m"><span class="v" id="eSpirals">0</span><span class="k">retry spirals</span></div>
+    <div class="m"><span class="v" id="eEmpty">0</span><span class="k">"empty = expected"</span></div>
+  </section>
+
+  <section class="panel reveal" id="errTrendPanel">
+    <div class="panel-head"><h2>error rate over time</h2><span class="sub" id="eTrendDelta">—</span></div>
+    <canvas id="errTrend" height="120"></canvas>
+    <div class="daily-note" style="padding-top:0"><p class="muted">Daily tool-call error rate (bar height) — the before/after loop: ship a discipline skill, watch the class drop. Amber line = overall mean.</p></div>
+  </section>
+
+  <div class="ob-layout">
+    <aside class="ob-index panel reveal">
+      <div class="panel-head"><h2>tools</h2><span class="sub" id="eToolSub">by error count</span></div>
+      <div id="eTools" class="ob-tools"></div>
+    </aside>
+
+    <section class="ob-main panel reveal">
+      <div class="panel-head"><h2>failure taxonomy</h2><span class="sub" id="eFilter">all tools</span></div>
+      <div id="eClasses" class="ob-cards"></div>
+
+      <div class="panel-head" style="border-top:1px solid var(--line)"><h2>retry spirals</h2><span class="sub">same call, errored 2+ times — the floundering signature</span></div>
+      <div id="eSpiralList" class="ob-spirals"></div>
+    </section>
+  </div>
+
+  <section class="panel reveal ob-detail" id="eDetailPanel">
+    <div class="panel-head"><h2 id="eDetailTitle">recent failures</h2><span class="sub" id="eDetailSub">click a class or tool to focus · sample with result previews</span></div>
+    <div class="ob-detail-grid">
+      <div class="ob-detail-col">
+        <div class="ob-col-head">what's failing</div>
+        <div id="eDetailWhat" class="ob-col-body"></div>
+      </div>
+      <div class="ob-detail-col">
+        <div class="ob-col-head">likely cause</div>
+        <div id="eDetailWhy" class="ob-col-body"></div>
+      </div>
+      <div class="ob-detail-col">
+        <div class="ob-col-head">discipline fix</div>
+        <div id="eDetailFix" class="ob-col-body"></div>
+      </div>
+    </div>
+    <div id="eSamples" class="ob-samples"></div>
+  </section>
+
+  <section class="panel reveal">
+    <div class="panel-head"><h2>reading this</h2></div>
+    <div class="daily-note">
+      <p>Sourced from <b>transcripts</b>, so this covers <b>every</b> local session and harness — not just <code>ccspy</code> runs. Most "errors" Claude hits aren't model failures; they're fragile tool calls.</p>
+      <p><span class="burn-k">expected_empty</span> is the sneaky one: an empty search isn't a failure, but agents often retry it like one. Classes are heuristic — the sample previews below let you sanity-check and refine them.</p>
+    </div>
+  </section>
+</section>
+
+<section id="feedView" class="view-feed">
+  <section class="strip reveal" id="feedHeadline">
+    <div class="m"><span class="v" id="fCount">0</span><span class="k">events buffered</span></div>
+    <div class="m accent3"><span class="v" id="fErr">0</span><span class="k">errors in feed</span></div>
+    <div class="m"><span class="v" id="fSessions">0</span><span class="k">live sessions</span></div>
+    <div class="m"><span class="v" id="fLast">—</span><span class="k">last event</span></div>
+  </section>
+  <section class="panel reveal" id="feedPanel">
+    <div class="panel-head">
+      <h2>universal activity feed</h2>
+      <span class="feed-controls">
+        <label class="follow-toggle"><input type="checkbox" id="feedErrOnly"><span>errors only</span></label>
+        <label class="follow-toggle"><input type="checkbox" id="feedScroll" checked><span>auto-scroll</span></label>
+        <button id="feedClear" class="navbtn">clear</button>
+      </span>
+    </div>
+    <div id="feedList" class="feed-list"></div>
+  </section>
+  <section class="panel reveal">
+    <div class="panel-head"><h2>how this works</h2></div>
+    <div class="daily-note">
+      <p>Fed by Claude Code <b>hooks</b> (<code>PostToolUse</code> / <code>Stop</code> / <code>UserPromptSubmit</code>) POSTing to the dashboard — <b>no proxy required</b>, so it lights up for every session and every harness on this machine.</p>
+      <p>For token-by-token thinking + timings of a single run, use the <a href="/live" class="inline-link">▸ wire console</a> (needs <code>ccspy</code>). This feed trades that fidelity for universal coverage.</p>
+    </div>
+  </section>
+</section>
+
 <div id="inspector" class="inspector" hidden>
   <div class="inspector-card">
     <div class="inspector-head">
@@ -191,7 +332,7 @@
 <footer>
   <span>proxy <code>http://127.0.0.1:4000</code> → <code>api.anthropic.com</code></span>
   <span id="wireCount">0 wire captures</span>
-  <span id="transcriptRoot">transcripts tailed from <code>CCSCOPE_TRANSCRIPT_ROOT</code> or <code>~/.claude/projects</code></span>
+  <span>run via <code>ccspy</code> · transcripts tailed from <code>~/.claude/projects</code></span>
 </footer>
 
 <script src="app.js"></script>

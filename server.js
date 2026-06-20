@@ -11,6 +11,7 @@ const { TranscriptWatcher } = require('./lib/transcripts');
 const { Store } = require('./lib/store');
 const { LiveSession } = require('./lib/livestream');
 const { getAccountUsage } = require('./lib/usage');
+const { buildCatalog } = require('./lib/skills');
 
 const ADMIN_KEY = process.env.CCSCOPE_ADMIN_KEY || '';
 
@@ -22,23 +23,7 @@ const BACKFILL_MS = Number(process.env.CCSCOPE_BACKFILL_HOURS || 0) * 60 * 60 * 
 const ROOT = __dirname;
 const LOG_ROOT = path.join(ROOT, 'logs');
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const TRANSCRIPT_ROOT = process.env.CCSCOPE_TRANSCRIPT_ROOT
-  ? path.resolve(process.env.CCSCOPE_TRANSCRIPT_ROOT)
-  : path.join(os.homedir(), '.claude', 'projects');
-const TRANSCRIPT_ROOT_LABEL = displayPathForUi(TRANSCRIPT_ROOT);
-
-function displayPathForUi(value) {
-  const insideRepo = path.relative(ROOT, value);
-  if (insideRepo && !insideRepo.startsWith('..') && !path.isAbsolute(insideRepo)) return insideRepo.replace(/\\/g, '/');
-  if (!insideRepo) return '.';
-
-  const home = os.homedir();
-  const insideHome = path.relative(home, value);
-  if (insideHome && !insideHome.startsWith('..') && !path.isAbsolute(insideHome)) return ('~/' + insideHome).replace(/\\/g, '/');
-  if (!insideHome) return '~';
-
-  return value.replace(/\\/g, '/');
-}
+const TRANSCRIPT_ROOT = path.join(os.homedir(), '.claude', 'projects');
 
 // ---------------------------------------------------------------- scrubbing
 const SCRUB_HEADERS = new Set(['authorization', 'x-api-key', 'cookie', 'set-cookie']);
@@ -168,6 +153,27 @@ const MIME = {
   '.json': 'application/json; charset=utf-8',
 };
 
+// Shape a raw Claude Code hook payload into a compact feed event. Mirrors
+// bin/cc-scope-hook.js so the native `http` hook can POST straight here.
+function normalizeHook(h) {
+  const trunc = (v, n) => { const s = typeof v === 'string' ? v : JSON.stringify(v ?? ''); return s.length > n ? s.slice(0, n) + '…' : s; };
+  const base = { sessionId: h.session_id || '', cwd: h.cwd || '', ts: Date.now() };
+  switch (h.hook_event_name) {
+    case 'PostToolUse': {
+      const tr = h.tool_response;
+      const txt = typeof tr === 'string' ? tr : JSON.stringify(tr ?? '');
+      const isError = !!(tr && typeof tr === 'object' && (tr.is_error || tr.error || (tr.stderr && !tr.stdout && tr.interrupted)))
+        || (typeof tr === 'string' && /\b(error|failed|not found|denied|exception)\b/i.test(tr));
+      return { ...base, kind: 'tool', tool: h.tool_name || '?', inputPreview: trunc(h.tool_input, 200), isError, resultPreview: trunc(txt, 300) };
+    }
+    case 'UserPromptSubmit': return { ...base, kind: 'prompt', text: trunc(h.prompt, 300) };
+    case 'Stop': return { ...base, kind: 'stop' };
+    case 'SubagentStop': return { ...base, kind: 'subagent_stop' };
+    case 'Notification': return { ...base, kind: 'notification', text: trunc(h.message, 200) };
+    default: return null;
+  }
+}
+
 function sendJson(res, status, value) {
   const body = JSON.stringify(value);
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -185,7 +191,7 @@ const dashboard = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
 
-  if (p === '/api/ping') return sendJson(res, 200, { ok: true, wireCount: store.wireCount, sessions: store.sessions.size, transcriptRoot: TRANSCRIPT_ROOT_LABEL });
+  if (p === '/api/ping') return sendJson(res, 200, { ok: true, wireCount: store.wireCount, sessions: store.sessions.size });
 
   if (p === '/events') {
     res.writeHead(200, {
@@ -193,13 +199,41 @@ const dashboard = http.createServer((req, res) => {
       'cache-control': 'no-cache',
       'connection': 'keep-alive',
     });
-    res.write(`data: ${JSON.stringify({ type: 'snapshot', sessions: store.listSessions(), wireCount: store.wireCount, transcriptRoot: TRANSCRIPT_ROOT_LABEL })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'snapshot', sessions: store.listSessions(), wireCount: store.wireCount })}\n\n`);
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
     return;
   }
 
+  // Hook sink — Claude Code hooks POST events here for the universal live feed.
+  // Accepts the RAW hook JSON (native `http` hook type — zero process spawn) and
+  // normalizes server-side, OR a pre-shaped event (legacy bin/cc-scope-hook.js).
+  // Replies fast, never blocks the agent. Localhost-only; previews are redacted
+  // + truncated in the store.
+  if (p === '/ingest' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (d) => { body += d; if (body.length > 1e6) req.destroy(); });
+    req.on('end', () => {
+      try {
+        const j = JSON.parse(body);
+        const ev = j.hook_event_name ? normalizeHook(j) : j; // raw vs pre-shaped
+        if (ev) store.addHookEvent(ev);
+      } catch { /* ignore malformed hook */ }
+      sendJson(res, 200, { ok: true });
+    });
+    return;
+  }
+
   if (p === '/api/sessions') return sendJson(res, 200, store.listSessions());
+
+  if (p === '/api/errors') return sendJson(res, 200, store.errorRollup());
+
+  if (p === '/api/skills') {
+    try { return sendJson(res, 200, buildCatalog(store.errorRollup())); }
+    catch (err) { return sendJson(res, 200, { error: err.message, skills: [], commands: [], needed: [], tools: [], counts: {} }); }
+  }
+
+  if (p === '/api/livefeed') return sendJson(res, 200, store.getLiveFeed());
 
   if (p === '/api/daily') return sendJson(res, 200, store.dailyRollup());
 

@@ -12,10 +12,14 @@ const state = {
   wireCount: 0,
   es: null,
   wireCache: new Map(),
-  transcriptRoot: '',
   renderQueued: false,
   daily: null,
   roi: null,
+  errors: null,
+  errFocus: { kind: null, key: null }, // {kind:'class'|'tool', key}
+  feed: [],
+  skills: null,
+  skillFocus: null,
 };
 
 // ------------------------------------------------------------------ utils
@@ -84,12 +88,6 @@ function setConn(text, cls) {
   $('liveDot').classList.toggle('live', cls === 'ok');
 }
 
-function updateTranscriptRoot() {
-  const el = $('transcriptRoot');
-  if (!el || !state.transcriptRoot) return;
-  el.innerHTML = `transcripts tailed from <code>${escapeHtml(state.transcriptRoot)}</code>`;
-}
-
 function upsertSession(summary) {
   const i = state.sessions.findIndex((s) => s.id === summary.id);
   if (i >= 0) state.sessions[i] = summary;
@@ -101,8 +99,6 @@ function handleEvent(ev) {
     case 'snapshot':
       state.sessions = ev.sessions;
       state.wireCount = ev.wireCount || 0;
-      state.transcriptRoot = ev.transcriptRoot || state.transcriptRoot;
-      updateTranscriptRoot();
       renderPicker();
       autoFollow();
       scheduleRender();
@@ -133,6 +129,11 @@ function handleEvent(ev) {
     case 'wire':
       state.wireCount++;
       $('wireCount').textContent = fmtInt(state.wireCount) + ' wire captures';
+      break;
+    case 'hook':
+      state.feed.push(ev.ev);
+      if (state.feed.length > 600) state.feed.shift();
+      if (document.body.classList.contains('feed')) appendFeedRow(ev.ev);
       break;
   }
   refreshDailyMaybe();
@@ -323,8 +324,8 @@ function renderRepeats() {
 }
 
 // ------------------------------------------------------------------ session gallery
-const BAR_COLORS = { t: '#ffb000', e: '#7dd87d', s: '#57c7d4', r: '#ff5c45', o: '#978f74' };
-const BAR_LABEL = { t: 'tool call', e: 'answer', s: 'sub-agent', r: 'error', o: 'other' };
+const BAR_COLORS = { t: '#ffb000', e: '#7dd87d', s: '#57c7d4', x: '#ff8c2b', r: '#ff5c45', o: '#978f74' };
+const BAR_LABEL = { t: 'tool call', e: 'answer', s: 'sub-agent', x: 'tool error', r: 'api error', o: 'other' };
 const GROUPS = [
   { key: 'marathon', title: 'MARATHON', sub: 'long sessions' },
   { key: 'autonomous', title: 'AUTONOMOUS', sub: 'long unbroken chains — loop-watch tier' },
@@ -476,23 +477,25 @@ function renderTokenChart() {
 
 // ------------------------------------------------------------------ daily roll-up
 function setView(view) {
-  document.body.classList.toggle('daily', view === 'daily');
-  document.body.classList.toggle('roi', view === 'roi');
+  for (const v of ['daily', 'roi', 'errors', 'feed', 'skills']) document.body.classList.toggle(v, view === v);
   for (const b of document.querySelectorAll('#viewtabs button')) b.classList.toggle('on', b.dataset.view === view);
   if (view === 'daily') loadDaily().catch(console.error);
   if (view === 'roi') loadRoi().catch(console.error);
+  if (view === 'errors') loadErrors().catch(console.error);
+  if (view === 'feed') { loadLiveFeed().catch(console.error); renderFeed(); }
+  if (view === 'skills') loadSkills().catch(console.error);
 }
 
 let dailyTimer = null;
 function refreshDailyMaybe() {
   if (dailyTimer) return;
-  const daily = document.body.classList.contains('daily');
-  const roi = document.body.classList.contains('roi');
-  if (!daily && !roi) return;
+  const b = document.body.classList;
+  if (!b.contains('daily') && !b.contains('roi') && !b.contains('errors')) return;
   dailyTimer = setTimeout(() => {
     dailyTimer = null;
     if (document.body.classList.contains('daily')) loadDaily().catch(() => {});
     if (document.body.classList.contains('roi')) loadRoi().catch(() => {});
+    if (document.body.classList.contains('errors')) loadErrors().catch(() => {});
   }, 1500);
 }
 
@@ -749,6 +752,336 @@ function bindRoi() {
   });
 }
 
+// ------------------------------------------------------------------ flounder view
+// Per-class colour + the "discipline" guidance shown in the detail panel. This is
+// the bridge from measurement to architecture: each class names a fix you could
+// ship as a skill rule, a typed-status wrapper, or an MCP tool.
+const ERR_CLASSES = {
+  expected_empty:    { color: '#7dd87d', what: 'A search returned nothing and the agent treated it like a failure — re-running or changing tack instead of accepting "none".', why: 'Empty ≠ error. The tool gave a valid empty result; the agent can\'t tell it apart from a real failure.', fix: 'Wrapper returns a typed <b>expected_empty</b> status; skill rule: "no matches is a valid answer, do not retry."' },
+  user_rejected:     { color: '#7dd87d', what: 'A human declined the tool use. <b>Not floundering</b> — counted here only because it surfaces as an error result.', why: 'You said no (permission prompt, plan rejection). Working as intended.', fix: 'Nothing to fix. Useful as a denominator caveat: subtract these from the "real" error rate.' },
+  stale_edit:        { color: '#ff8c2b', what: 'An Edit/Write failed its precondition — file not read first, or the match string no longer matches.', why: 'Pure agent discipline: edited before reading, or against a stale view of the file.', fix: 'Skill rule: "always Read before Edit; re-read after any external change." The single cheapest discipline win.' },
+  unknown_tool:      { color: '#ff5c45', what: 'The agent called a tool that doesn\'t exist or isn\'t registered/loaded.', why: 'Invented a tool name, or an MCP tool exists without a tier/registration entry.', fix: 'Register the tool with its server/tier so it resolves; skill rule: search for the tool before invoking it.' },
+  mcp_auth:          { color: '#ff5c45', what: 'An MCP server rejected the call — token expired / needs re-authorization.', why: 'Auth lifecycle, not the agent. But blind retries against an expired token burn tokens.', fix: 'Centralize auth in a relay/gateway so refresh is handled once, off the agent\'s path.' },
+  mcp_transport:     { color: '#ff5c45', what: 'MCP transport failure — HTTP POST to the server errored, or a stale handle (e.g. a closed browser tab).', why: 'Server/network/handle problem outside the model.', fix: 'Relay with retries + a typed status; skill rule: refresh the handle (tabs_context) before reuse.' },
+  connect_error:     { color: '#b07a00', what: 'Could not reach an endpoint — server down or unreachable.', why: 'Upstream availability, not the agent.', fix: 'Health-check before the run; typed <b>blocked_missing_dependency</b> status so the agent stops, not spins.' },
+  binary_file:       { color: '#b07a00', what: 'Tried to read a binary file (e.g. .docx/.pdf) with a text tool.', why: 'Agent assumed text; the file is binary.', fix: 'Skill rule: route .docx/.pdf/binary through the right extractor; wrapper that picks the tool by extension.' },
+  shell_failure:     { color: '#ff8c2b', what: 'A raw shell command failed — bad syntax, wrong cwd, command not found, non-zero exit.', why: 'Agent invented a command shape or assumed repo/cwd state it never checked.', fix: 'Preflight cwd/repo state; <b>repo_*</b> wrappers with one canonical command shape. Promote the worst offenders to MCP.' },
+  aws_format:        { color: '#ff5c45', what: 'An AWS CLI call was malformed — bad flags, missing profile/region, expired creds, wrong service syntax.', why: 'Raw `aws ...` through Bash is high-variance; the agent guesses option names and auth.', fix: 'An <b>aws_ssm_run</b> / typed AWS tool that handles auth + flags. This is the poster child for an MCP tool.' },
+  brain_validation:  { color: '#57c7d4', what: 'A capture/ingest tool rejected the payload on validation.', why: 'Payload didn\'t match the capture schema; the agent built it by hand.', fix: 'A <b>brain_capture_validate</b> wrapper that shapes + validates before sending, returning a typed status.' },
+  webfetch_miss:     { color: '#b07a00', what: 'A web fetch/search failed or came back empty — unreachable, blocked, rate-limited, or no results.', why: 'Often the open internet, not the agent — but blind retries burn tokens.', fix: 'Wrapper distinguishes transient (retry-once) from terminal (give up). Skill rule: cap fetch retries.' },
+  file_not_found:    { color: '#ff8c2b', what: 'A path didn\'t exist — ENOENT, wrong relative path, stale location.', why: 'Agent assumed a file/dir without confirming it from a search or listing first.', fix: 'Preflight with a search/glob before read/edit; skill rule: never assume a path.' },
+  permission_denied: { color: '#ff5c45', what: 'An operation was blocked — permission denied, EACCES, denied by policy/sandbox.', why: 'Agent attempted a privileged or out-of-scope action.', fix: 'Scope tools/permissions up front; surface the block as a typed <b>blocked</b> status, not a retry.' },
+  validation:        { color: '#ff5c45', what: 'A tool rejected its input — schema/argument validation, missing required field.', why: 'Arguments were malformed or a required parameter was omitted.', fix: 'Typed wrappers with validated params; the contract lives in code, not in the prompt.' },
+  timeout:           { color: '#b07a00', what: 'A call timed out.', why: 'Slow upstream, oversized operation, or a hung command.', fix: 'Bounded timeouts + a typed <b>timeout</b> status so the agent backs off deliberately.' },
+  real_error:        { color: '#ff5c45', what: 'A genuine error that doesn\'t fit the other buckets.', why: 'Mixed bag — inspect the previews to see if a new class is hiding here.', fix: 'Read the samples; if a pattern repeats, give it its own class + fix.' },
+};
+function clsMeta(c) { return ERR_CLASSES[c] || { color: '#978f74', what: c, why: '—', fix: '—' }; }
+
+async function loadErrors() {
+  state.errors = await fetchJson('/api/errors');
+  renderErrors();
+}
+
+function renderErrors() {
+  const d = state.errors;
+  if (!d) return;
+  const pct = (r) => (r * 100).toFixed(r >= 0.1 ? 0 : 1) + '%';
+  $('eRate').textContent = d.totalCalls ? pct(d.errorRate) : '—';
+  $('eErrored').textContent = fmtInt(d.erroredCalls);
+  $('eTotal').textContent = fmtInt(d.totalCalls);
+  $('eBurn').textContent = fmtTok(d.tokensOnErroredTurns);
+  $('eTop').textContent = d.classes.length ? d.classes[0].cls : '—';
+  $('eSpirals').textContent = fmtInt(d.spirals.length);
+  $('eEmpty').textContent = fmtInt(d.expectedEmpty);
+
+  // tool index — by error count; click to focus
+  const maxErr = Math.max(1, ...d.tools.map((t) => t.errors));
+  $('eTools').innerHTML = d.tools.slice(0, 40).map((t) => {
+    const sel = state.errFocus.kind === 'tool' && state.errFocus.key === t.tool ? ' sel' : '';
+    const clean = t.errors === 0 ? ' clean' : '';
+    return `<div class="ob-tool${sel}${clean}" data-tool="${escapeHtml(t.tool)}">
+      <span class="tname" title="${escapeHtml(t.tool)}">${escapeHtml(t.tool)}</span>
+      <span><span class="terr">${t.errors}</span><span class="trate">${t.total ? Math.round((t.errors / t.total) * 100) : 0}% of ${t.total}</span></span>
+    </div>`;
+  }).join('') || '<div class="none">no tool calls yet</div>';
+
+  // failure-class cards
+  const maxCls = Math.max(1, ...d.classes.map((c) => c.count));
+  $('eClasses').innerHTML = d.classes.map((c) => {
+    const m = clsMeta(c.cls);
+    const sel = state.errFocus.kind === 'class' && state.errFocus.key === c.cls ? ' sel' : '';
+    const share = d.erroredCalls ? Math.round((c.count / d.erroredCalls) * 100) : 0;
+    return `<div class="ob-card${sel}" data-class="${escapeHtml(c.cls)}" style="--cls:${m.color}">
+      <div class="cname">${escapeHtml(c.cls)}</div>
+      <div class="ccount">${c.count}</div>
+      <div class="cmeta">${share}% of failures</div>
+      <div class="cbar"><i style="width:${Math.max(4, (c.count / maxCls) * 100)}%"></i></div>
+    </div>`;
+  }).join('') || '<div class="none">no failures recorded — clean run</div>';
+
+  // retry spirals
+  $('eSpiralList').innerHTML = d.spirals.length ? d.spirals.map((s) => `
+    <div class="ob-spiral">
+      <span class="scount">${s.count}×</span>
+      <span class="sname">${escapeHtml(s.name)}</span>
+      <span class="sclass">${escapeHtml(s.errorClass)}</span>
+      <span class="sin" title="${escapeHtml(s.inputPreview || '')}">${escapeHtml(s.inputPreview || '')}</span>
+    </div>`).join('') : '<div class="none">no identical call errored twice — no retry-loop signature</div>';
+
+  renderErrTrend(d.daily || []);
+  renderErrDetail();
+}
+
+// 7-day error rate vs the prior 7 days — the "did the skill help" readout.
+function renderErrTrend(daily) {
+  const sum = (arr) => arr.reduce((a, x) => ({ e: a.e + x.errored, t: a.t + x.total }), { e: 0, t: 0 });
+  const last7 = daily.slice(-7);
+  const prior7 = daily.slice(-14, -7);
+  const r7 = sum(last7), rp = sum(prior7);
+  const cur = r7.t ? r7.e / r7.t : 0;
+  const prev = rp.t ? rp.e / rp.t : 0;
+  const el = $('eTrendDelta');
+  if (!last7.length) { el.textContent = 'no data yet'; el.className = 'sub'; }
+  else if (!prior7.length) { el.textContent = `last 7d: ${(cur * 100).toFixed(1)}%`; el.className = 'sub'; }
+  else {
+    const d = cur - prev;
+    const arrow = d < -0.001 ? '▼' : d > 0.001 ? '▲' : '▬';
+    el.innerHTML = `7d <b>${(cur * 100).toFixed(1)}%</b> vs prior ${(prev * 100).toFixed(1)}% <span style="color:${d <= 0 ? 'var(--green)' : 'var(--orange)'}">${arrow} ${(Math.abs(d) * 100).toFixed(1)}pt</span>`;
+    el.className = 'sub';
+  }
+  drawErrTrend(daily.slice(-45));
+}
+
+function drawErrTrend(days) {
+  const canvas = $('errTrend');
+  if (!canvas) return;
+  const cssW = Math.max(120, (canvas.parentElement.clientWidth || 600) - 28);
+  const cssH = 120;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = cssW * dpr; canvas.height = cssH * dpr;
+  canvas.style.width = cssW + 'px'; canvas.style.height = cssH + 'px';
+  canvas.style.margin = '10px 14px';
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+  if (!days.length) { ctx.fillStyle = '#5d5742'; ctx.font = '10px "Spline Sans Mono"'; ctx.fillText('no data', 2, 14); return; }
+  const rates = days.map((d) => d.rate || 0);
+  const maxR = Math.max(...rates, 0.01);
+  const tot = days.reduce((a, d) => ({ e: a.e + d.errored, t: a.t + d.total }), { e: 0, t: 0 });
+  const mean = tot.t ? tot.e / tot.t : 0;
+  const n = days.length, slot = cssW / n, bw = Math.max(1.5, slot - 1.5);
+  days.forEach((d, i) => {
+    const h = (d.rate / maxR) * (cssH - 24);
+    ctx.fillStyle = d.rate > mean * 1.25 ? '#ff8c2b' : '#b07a00';
+    ctx.fillRect(i * slot, cssH - h - 14, bw, h);
+  });
+  // mean line
+  const my = cssH - 14 - (mean / maxR) * (cssH - 24);
+  ctx.strokeStyle = '#ffb000'; ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(0, my); ctx.lineTo(cssW, my); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = '#5d5742'; ctx.font = '10px "Spline Sans Mono"';
+  ctx.fillText(`daily error rate · peak ${(maxR * 100).toFixed(1)}% · mean ${(mean * 100).toFixed(1)}%`, 2, 10);
+}
+
+function renderErrDetail() {
+  const d = state.errors;
+  if (!d) return;
+  const f = state.errFocus;
+  let samples = d.samples;
+  let title = 'recent failures · all';
+  let meta = null;
+  if (f.kind === 'class') { samples = samples.filter((s) => s.errorClass === f.key); title = `failure class · ${f.key}`; meta = clsMeta(f.key); }
+  else if (f.kind === 'tool') { samples = samples.filter((s) => s.tool === f.key); title = `tool · ${f.key}`; }
+  $('eDetailTitle').textContent = title;
+
+  if (meta) {
+    $('eDetailWhat').innerHTML = meta.what;
+    $('eDetailWhy').innerHTML = meta.why;
+    $('eDetailFix').innerHTML = meta.fix;
+  } else {
+    $('eDetailWhat').innerHTML = 'Click a <b>failure class</b> card to see what it is, the likely cause, and the discipline fix.';
+    $('eDetailWhy').innerHTML = 'Or click a <b>tool</b> in the index to see only its failures.';
+    $('eDetailFix').innerHTML = 'The fixes map to the four layers: skill rule, typed wrapper, MCP tool, or relay.';
+  }
+
+  $('eSamples').innerHTML = samples.length ? samples.slice(0, 60).map((s) => {
+    const m = clsMeta(s.errorClass);
+    return `<div class="ob-sample" style="border-left-color:${m.color}">
+      <div class="sh"><span class="stool">${escapeHtml(s.tool)}</span><span class="scls">${escapeHtml(s.errorClass)}</span><span class="sproj">${escapeHtml(s.project)} · ${fmtClock(s.ts)}</span></div>
+      ${s.inputPreview ? `<div class="sin">↳ ${escapeHtml(s.inputPreview)}</div>` : ''}
+      <div class="sbody">${escapeHtml(s.preview || '(no preview captured)')}</div>
+    </div>`;
+  }).join('') : '<div class="none">no samples for this focus</div>';
+}
+
+function bindErrors() {
+  $('eTools').addEventListener('click', (e) => {
+    const el = e.target.closest('.ob-tool'); if (!el) return;
+    const tool = el.dataset.tool;
+    state.errFocus = (state.errFocus.kind === 'tool' && state.errFocus.key === tool) ? { kind: null, key: null } : { kind: 'tool', key: tool };
+    renderErrors();
+  });
+  $('eClasses').addEventListener('click', (e) => {
+    const el = e.target.closest('.ob-card'); if (!el) return;
+    const cls = el.dataset.class;
+    state.errFocus = (state.errFocus.kind === 'class' && state.errFocus.key === cls) ? { kind: null, key: null } : { kind: 'class', key: cls };
+    renderErrors();
+  });
+}
+
+// ------------------------------------------------------------------ live feed (hook-fed)
+async function loadLiveFeed() {
+  try { state.feed = await fetchJson('/api/livefeed'); } catch { /* server briefly busy */ }
+  renderFeed();
+}
+
+const FEED_GLYPH = { tool: '🔧', prompt: '👤', stop: '⏹', subagent_stop: '◧', notification: '🔔' };
+function feedRowHtml(ev) {
+  const g = FEED_GLYPH[ev.kind] || '·';
+  const err = ev.kind === 'tool' && ev.isError ? ' err' : '';
+  let main;
+  if (ev.kind === 'tool') {
+    main = `<span class="ftool">${escapeHtml(ev.tool || '?')}</span> <span class="fin">${escapeHtml(ev.inputPreview || '')}</span>${ev.isError ? `<span class="fcls">${escapeHtml(ev.errorClass || 'error')}</span>` : ''}`;
+  } else if (ev.kind === 'prompt') {
+    main = `<span class="fprompt">▸ ${escapeHtml(ev.text || '')}</span>`;
+  } else {
+    main = `<span class="ftext">${escapeHtml(ev.kind)}${ev.text ? ' · ' + escapeHtml(ev.text) : ''}</span>`;
+  }
+  return `<div class="feed-row${err}">
+    <span class="ftime">${fmtClock(ev.ts)}</span>
+    <span class="fglyph">${g}</span>
+    <span class="fmain">${main}</span>
+    <span class="fproj">${escapeHtml(ev.project || '')}</span>
+  </div>`;
+}
+
+function feedVisible(ev) { return !($('feedErrOnly') && $('feedErrOnly').checked) || (ev.kind === 'tool' && ev.isError); }
+
+function renderFeed() {
+  const host = $('feedList');
+  if (!host) return;
+  const rows = state.feed.filter(feedVisible);
+  host.innerHTML = rows.length ? rows.map(feedRowHtml).join('') : '<div class="feed-empty">no activity yet — wire the cc-scope hook (see below) and run any Claude Code session.</div>';
+  updateFeedStats();
+  if ($('feedScroll') && $('feedScroll').checked) host.scrollTop = host.scrollHeight;
+}
+
+function appendFeedRow(ev) {
+  const host = $('feedList');
+  if (!host) return;
+  const empty = host.querySelector('.feed-empty');
+  if (empty) host.innerHTML = '';
+  if (feedVisible(ev)) {
+    host.insertAdjacentHTML('beforeend', feedRowHtml(ev));
+    if ($('feedScroll') && $('feedScroll').checked) host.scrollTop = host.scrollHeight;
+  }
+  updateFeedStats();
+}
+
+function updateFeedStats() {
+  const f = state.feed;
+  $('fCount').textContent = fmtInt(f.length);
+  $('fErr').textContent = fmtInt(f.filter((e) => e.kind === 'tool' && e.isError).length);
+  $('fSessions').textContent = fmtInt(new Set(f.map((e) => e.sessionId).filter(Boolean)).size);
+  $('fLast').textContent = f.length ? fmtClock(f[f.length - 1].ts) : '—';
+}
+
+function bindFeed() {
+  $('feedClear').addEventListener('click', () => { state.feed = []; renderFeed(); });
+  $('feedErrOnly').addEventListener('change', renderFeed);
+}
+
+// ------------------------------------------------------------------ skills view
+async function loadSkills() {
+  state.skills = await fetchJson('/api/skills');
+  if (!state.skillFocus && state.skills.skills.length) state.skillFocus = state.skills.skills[0].slug;
+  renderSkills();
+}
+
+const PRESENCE_TITLE = { ok: 'in sync', staged: 'staged for upload — not confirmed live in cloud', drift: 'diverged from canonical', missing: 'not deployed' };
+const PRESENCE_MARK = { ok: ' ✓', staged: ' ⇡', drift: ' ±', missing: ' ·' };
+
+function renderSkills() {
+  const d = state.skills;
+  if (!d) return;
+  const tools = d.tools || [];
+  const c = d.counts || {};
+  $('skTotal').textContent = fmtInt(c.total || 0);
+  $('skClaude').textContent = fmtInt((c.byTool || {}).claude || 0);
+  $('skCodex').textContent = fmtInt((c.byTool || {}).codex || 0);
+  $('skCowork').textContent = fmtInt((c.byTool || {}).cowork || 0);
+  $('skDrift').textContent = fmtInt(c.drift || 0);
+  $('skNeed').textContent = fmtInt(c.needed || 0);
+  $('skCmds').textContent = fmtInt(c.commands || 0);
+  $('skCanon').textContent = d.canonicalRoot ? 'canonical: ' + d.canonicalRoot.replace(/\\/g, '/').split('/').slice(-2).join('/') : 'no canonical repo — run skillsync import';
+  $('skIndexSub').textContent = `${d.skills.length} skills · ${tools.length} tools`;
+
+  // index — coverage dots per tool
+  $('skList').innerHTML = d.skills.map((s) => {
+    const sel = state.skillFocus === s.slug ? ' sel' : '';
+    const dots = tools.map((t) => `<span class="dot ${s.presence[t.key]}" title="${escapeHtml(t.label)}: ${PRESENCE_TITLE[s.presence[t.key]]}"></span>`).join('');
+    return `<div class="ob-tool${sel}" data-skill="${escapeHtml(s.slug)}">
+      <span class="tname" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
+      <span class="scov">${dots}</span>
+    </div>`;
+  }).join('') || '<div class="none">no skills found</div>';
+
+  // cards — one per skill with coverage pills
+  $('skCards').innerHTML = d.skills.map((s) => {
+    const sel = state.skillFocus === s.slug ? ' sel' : '';
+    const pills = tools.map((t) => `<span class="sk-pill ${s.presence[t.key]}">${t.key}${PRESENCE_MARK[s.presence[t.key]] || ' ·'}</span>`).join('');
+    return `<div class="ob-card sk-card${sel}" data-skill="${escapeHtml(s.slug)}">
+      <div class="cname">${escapeHtml(s.name)}</div>
+      <div class="cmeta">${escapeHtml((s.description || '').slice(0, 90))}${(s.description || '').length > 90 ? '…' : ''}</div>
+      <div class="sk-pills">${pills}</div>
+    </div>`;
+  }).join('') || '<div class="none">no skills</div>';
+
+  // needed gaps from flounder
+  $('skNeeded').innerHTML = (d.needed || []).length ? d.needed.map((n) => `
+    <div class="ob-spiral">
+      <span class="sneed ${n.covered ? '' : 'gap'}">${n.covered ? '✓' : '✗'}</span>
+      <span class="sname">${escapeHtml(n.skill)}</span>
+      <span class="sclass">${escapeHtml(n.fromClass)} · ${n.failures} fails</span>
+      <span class="sin" title="${escapeHtml(n.why)}">${escapeHtml(n.why)}</span>
+    </div>`).join('') : '<div class="none">no failure-derived gaps — run some sessions through the FLOUNDER lens first</div>';
+
+  // claude commands
+  $('skCommands').innerHTML = (d.commands || []).length
+    ? d.commands.map((cmd) => `<span class="sk-cmd" title="${escapeHtml(cmd.description || '')}"><span class="slash">/</span>${escapeHtml(cmd.slug)}</span>`).join('')
+    : '<div class="none">no commands</div>';
+
+  renderSkillDetail();
+}
+
+function renderSkillDetail() {
+  const d = state.skills;
+  if (!d) return;
+  const s = (d.skills || []).find((x) => x.slug === state.skillFocus);
+  if (!s) { $('skDetailTitle').textContent = 'select a skill'; return; }
+  $('skDetailTitle').textContent = s.name;
+  $('skDetailSub').textContent = `${s.canonical ? 'canonical' : 'tool-local (not in canonical repo)'} · status ${s.status}`;
+  $('skWhat').innerHTML = escapeHtml(s.description || '(no description in frontmatter)');
+  $('skDeployed').innerHTML = (d.tools || []).map((t) => {
+    const p = s.presence[t.key];
+    const col = p === 'ok' ? 'var(--green)' : p === 'staged' ? 'var(--cyan)' : p === 'drift' ? 'var(--orange)' : 'var(--ink-faint)';
+    return `<div><span style="color:${col}">●</span> ${escapeHtml(t.label)} — ${PRESENCE_TITLE[p]}</div>`;
+  }).join('');
+  $('skTags').innerHTML = `<div>${(s.tags || []).map((t) => `<span class="sk-pill">${escapeHtml(t)}</span>`).join(' ') || '<span class="muted">no tags</span>'}</div>
+    <div style="margin-top:6px">targets: ${escapeHtml((s.targets || []).join(', '))}</div>`;
+  $('skBody').innerHTML = `<div class="ob-sample"><div class="sbody">${escapeHtml(s.body || '(no body)')}</div></div>`;
+}
+
+function bindSkills() {
+  const pick = (e) => {
+    const el = e.target.closest('[data-skill]');
+    if (!el) return;
+    state.skillFocus = el.dataset.skill;
+    renderSkills();
+  };
+  $('skList').addEventListener('click', pick);
+  $('skCards').addEventListener('click', pick);
+}
+
 // ------------------------------------------------------------------ inspector
 let insTurn = null;
 
@@ -791,9 +1124,9 @@ async function setTab(name) {
       ${kv('tokens', t.usage ? `in ${fmtInt(t.usage.input_tokens)} · out ${fmtInt(t.usage.output_tokens)} · cache-write ${fmtInt(t.usage.cache_creation_input_tokens)} · cache-read ${fmtInt(t.usage.cache_read_input_tokens)}` : '—')}
       ${kv('tool calls', t.tools.length ? '' : 'none')}
     </div>` + t.tools.map((c) => `
-      <div class="block-card tool">
-        <div class="bh">tool_use · ${escapeHtml(c.name)}${c.isError ? ' · ERROR RESULT' : ''}${c.resultSize != null ? ` · result ${fmtInt(c.resultSize)} chars` : ''}</div>
-        <div class="bb">${escapeHtml(c.inputPreview || '')}</div>
+      <div class="block-card tool${c.isError ? ' toolerr' : ''}">
+        <div class="bh">tool_use · ${escapeHtml(c.name)}${c.isError ? ` · ✗ ${escapeHtml(c.errorClass || 'error')}` : ''}${c.resultSize != null ? ` · result ${fmtInt(c.resultSize)} chars` : ''}</div>
+        <div class="bb">${escapeHtml(c.inputPreview || '')}${c.isError && c.resultPreview ? `\n↳ ${escapeHtml(c.resultPreview)}` : ''}</div>
       </div>`).join('');
     return;
   }
@@ -892,9 +1225,13 @@ async function main() {
   for (const b of document.querySelectorAll('.tabs button')) b.addEventListener('click', () => setTab(b.dataset.tab));
   for (const b of document.querySelectorAll('#viewtabs button')) b.addEventListener('click', () => setView(b.dataset.view));
   bindRoi();
+  bindErrors();
+  bindFeed();
+  bindSkills();
   window.addEventListener('resize', () => {
     scheduleRender();
     if (document.body.classList.contains('daily') && state.daily) drawDailyChart(state.daily.days);
+    if (document.body.classList.contains('errors') && state.errors) drawErrTrend((state.errors.daily || []).slice(-45));
   });
 
   try { state.pricing = await fetchJson('/pricing.json'); } catch { state.pricing = null; }
