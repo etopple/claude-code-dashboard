@@ -12,6 +12,7 @@ const state = {
   wireCount: 0,
   es: null,
   wireCache: new Map(),
+  transcriptRoot: '',
   renderQueued: false,
   daily: null,
   roi: null,
@@ -20,6 +21,7 @@ const state = {
   feed: [],
   skills: null,
   skillFocus: null,
+  agents: null,
 };
 
 // ------------------------------------------------------------------ utils
@@ -88,6 +90,12 @@ function setConn(text, cls) {
   $('liveDot').classList.toggle('live', cls === 'ok');
 }
 
+function updateTranscriptRoot() {
+  const el = $('transcriptRoot');
+  if (!el || !state.transcriptRoot) return;
+  el.innerHTML = `transcripts tailed from <code>${escapeHtml(state.transcriptRoot)}</code>`;
+}
+
 function upsertSession(summary) {
   const i = state.sessions.findIndex((s) => s.id === summary.id);
   if (i >= 0) state.sessions[i] = summary;
@@ -99,6 +107,8 @@ function handleEvent(ev) {
     case 'snapshot':
       state.sessions = ev.sessions;
       state.wireCount = ev.wireCount || 0;
+      state.transcriptRoot = ev.transcriptRoot || state.transcriptRoot;
+      updateTranscriptRoot();
       renderPicker();
       autoFollow();
       scheduleRender();
@@ -324,7 +334,9 @@ function renderRepeats() {
 }
 
 // ------------------------------------------------------------------ session gallery
-const BAR_COLORS = { t: '#ffb000', e: '#7dd87d', s: '#57c7d4', x: '#ff8c2b', r: '#ff5c45', o: '#978f74' };
+// Tufte categorical: gray for context (the bulk of any run), the single red
+// accent reserved for the thing the reader should look at — errors.
+const BAR_COLORS = { t: '#46423a', e: '#c8c2b5', s: '#2f6690', x: '#9a6a00', r: '#b3261e', o: '#dad5ca' };
 const BAR_LABEL = { t: 'tool call', e: 'answer', s: 'sub-agent', x: 'tool error', r: 'api error', o: 'other' };
 const GROUPS = [
   { key: 'marathon', title: 'MARATHON', sub: 'long sessions' },
@@ -398,9 +410,9 @@ function drawBars(cv) {
   for (let i = 0; i < bars.length; i++) {
     const c = bars[i];
     const x = i * bw;
-    if (c === '|') { // human input — dark gap + faint tick
-      ctx.fillStyle = '#0b0a08'; ctx.fillRect(x, 0, Math.max(1, bw), cssH);
-      ctx.fillStyle = 'rgba(232,224,201,0.55)'; ctx.fillRect(x, 0, Math.min(bw, 2), cssH);
+    if (c === '|') { // human input — paper gap + thin ink tick
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(x, 0, Math.max(1, bw), cssH);
+      ctx.fillStyle = '#1a1a1a'; ctx.fillRect(x, 0, 1, cssH);
       continue;
     }
     ctx.fillStyle = BAR_COLORS[c] || BAR_COLORS.o;
@@ -467,23 +479,25 @@ function renderTokenChart() {
   turns.forEach((t, i) => {
     const out = t.usage ? t.usage.output_tokens || 0 : 0;
     const h = (out / maxOut) * (cssH - 16);
-    ctx.fillStyle = t.isSidechain ? '#57c7d4' : '#ffb000';
+    // peak turn carries the accent; everything else is quiet ink, sidechains slate
+    ctx.fillStyle = out === maxOut ? '#b3261e' : t.isSidechain ? '#2f6690' : '#46423a';
     ctx.fillRect(i * (bw + 1), cssH - h, bw, h);
   });
-  ctx.fillStyle = '#5d5742';
+  ctx.fillStyle = '#8a857c';
   ctx.font = '10px "Spline Sans Mono"';
   ctx.fillText(`output tokens / turn · peak ${fmtTok(maxOut)}`, 2, 10);
 }
 
 // ------------------------------------------------------------------ daily roll-up
 function setView(view) {
-  for (const v of ['daily', 'roi', 'errors', 'feed', 'skills']) document.body.classList.toggle(v, view === v);
+  for (const v of ['daily', 'roi', 'errors', 'feed', 'skills', 'agents']) document.body.classList.toggle(v, view === v);
   for (const b of document.querySelectorAll('#viewtabs button')) b.classList.toggle('on', b.dataset.view === view);
   if (view === 'daily') loadDaily().catch(console.error);
   if (view === 'roi') loadRoi().catch(console.error);
   if (view === 'errors') loadErrors().catch(console.error);
   if (view === 'feed') { loadLiveFeed().catch(console.error); renderFeed(); }
   if (view === 'skills') loadSkills().catch(console.error);
+  if (view === 'agents') loadAgents().catch(console.error);
 }
 
 let dailyTimer = null;
@@ -592,10 +606,11 @@ function drawDailyChart(daysDesc) {
   const bw = Math.max(1.5, slot - 1);
   days.forEach((day, i) => {
     const h = (vals[i] / maxV) * (cssH - 24);
-    ctx.fillStyle = '#ffb000';
+    // costliest day carries the accent; the rest are quiet ink
+    ctx.fillStyle = vals[i] === maxV ? '#b3261e' : '#46423a';
     ctx.fillRect(i * slot, cssH - h - 14, bw, h);
   });
-  ctx.fillStyle = '#5d5742';
+  ctx.fillStyle = '#8a857c';
   ctx.font = '10px "Spline Sans Mono"';
   ctx.fillText(`cost / day · peak $${maxV >= 1 ? maxV.toFixed(2) : maxV.toFixed(3)}`, 2, 10);
 }
@@ -757,25 +772,25 @@ function bindRoi() {
 // the bridge from measurement to architecture: each class names a fix you could
 // ship as a skill rule, a typed-status wrapper, or an MCP tool.
 const ERR_CLASSES = {
-  expected_empty:    { color: '#7dd87d', what: 'A search returned nothing and the agent treated it like a failure — re-running or changing tack instead of accepting "none".', why: 'Empty ≠ error. The tool gave a valid empty result; the agent can\'t tell it apart from a real failure.', fix: 'Wrapper returns a typed <b>expected_empty</b> status; skill rule: "no matches is a valid answer, do not retry."' },
-  user_rejected:     { color: '#7dd87d', what: 'A human declined the tool use. <b>Not floundering</b> — counted here only because it surfaces as an error result.', why: 'You said no (permission prompt, plan rejection). Working as intended.', fix: 'Nothing to fix. Useful as a denominator caveat: subtract these from the "real" error rate.' },
-  stale_edit:        { color: '#ff8c2b', what: 'An Edit/Write failed its precondition — file not read first, or the match string no longer matches.', why: 'Pure agent discipline: edited before reading, or against a stale view of the file.', fix: 'Skill rule: "always Read before Edit; re-read after any external change." The single cheapest discipline win.' },
-  unknown_tool:      { color: '#ff5c45', what: 'The agent called a tool that doesn\'t exist or isn\'t registered/loaded.', why: 'Invented a tool name, or an MCP tool exists without a tier/registration entry.', fix: 'Register the tool with its server/tier so it resolves; skill rule: search for the tool before invoking it.' },
-  mcp_auth:          { color: '#ff5c45', what: 'An MCP server rejected the call — token expired / needs re-authorization.', why: 'Auth lifecycle, not the agent. But blind retries against an expired token burn tokens.', fix: 'Centralize auth in a relay/gateway so refresh is handled once, off the agent\'s path.' },
-  mcp_transport:     { color: '#ff5c45', what: 'MCP transport failure — HTTP POST to the server errored, or a stale handle (e.g. a closed browser tab).', why: 'Server/network/handle problem outside the model.', fix: 'Relay with retries + a typed status; skill rule: refresh the handle (tabs_context) before reuse.' },
-  connect_error:     { color: '#b07a00', what: 'Could not reach an endpoint — server down or unreachable.', why: 'Upstream availability, not the agent.', fix: 'Health-check before the run; typed <b>blocked_missing_dependency</b> status so the agent stops, not spins.' },
-  binary_file:       { color: '#b07a00', what: 'Tried to read a binary file (e.g. .docx/.pdf) with a text tool.', why: 'Agent assumed text; the file is binary.', fix: 'Skill rule: route .docx/.pdf/binary through the right extractor; wrapper that picks the tool by extension.' },
-  shell_failure:     { color: '#ff8c2b', what: 'A raw shell command failed — bad syntax, wrong cwd, command not found, non-zero exit.', why: 'Agent invented a command shape or assumed repo/cwd state it never checked.', fix: 'Preflight cwd/repo state; <b>repo_*</b> wrappers with one canonical command shape. Promote the worst offenders to MCP.' },
-  aws_format:        { color: '#ff5c45', what: 'An AWS CLI call was malformed — bad flags, missing profile/region, expired creds, wrong service syntax.', why: 'Raw `aws ...` through Bash is high-variance; the agent guesses option names and auth.', fix: 'An <b>aws_ssm_run</b> / typed AWS tool that handles auth + flags. This is the poster child for an MCP tool.' },
-  brain_validation:  { color: '#57c7d4', what: 'A capture/ingest tool rejected the payload on validation.', why: 'Payload didn\'t match the capture schema; the agent built it by hand.', fix: 'A <b>brain_capture_validate</b> wrapper that shapes + validates before sending, returning a typed status.' },
-  webfetch_miss:     { color: '#b07a00', what: 'A web fetch/search failed or came back empty — unreachable, blocked, rate-limited, or no results.', why: 'Often the open internet, not the agent — but blind retries burn tokens.', fix: 'Wrapper distinguishes transient (retry-once) from terminal (give up). Skill rule: cap fetch retries.' },
-  file_not_found:    { color: '#ff8c2b', what: 'A path didn\'t exist — ENOENT, wrong relative path, stale location.', why: 'Agent assumed a file/dir without confirming it from a search or listing first.', fix: 'Preflight with a search/glob before read/edit; skill rule: never assume a path.' },
-  permission_denied: { color: '#ff5c45', what: 'An operation was blocked — permission denied, EACCES, denied by policy/sandbox.', why: 'Agent attempted a privileged or out-of-scope action.', fix: 'Scope tools/permissions up front; surface the block as a typed <b>blocked</b> status, not a retry.' },
-  validation:        { color: '#ff5c45', what: 'A tool rejected its input — schema/argument validation, missing required field.', why: 'Arguments were malformed or a required parameter was omitted.', fix: 'Typed wrappers with validated params; the contract lives in code, not in the prompt.' },
-  timeout:           { color: '#b07a00', what: 'A call timed out.', why: 'Slow upstream, oversized operation, or a hung command.', fix: 'Bounded timeouts + a typed <b>timeout</b> status so the agent backs off deliberately.' },
-  real_error:        { color: '#ff5c45', what: 'A genuine error that doesn\'t fit the other buckets.', why: 'Mixed bag — inspect the previews to see if a new class is hiding here.', fix: 'Read the samples; if a pattern repeats, give it its own class + fix.' },
+  expected_empty:    { color: '#3f7d3f', what: 'A search returned nothing and the agent treated it like a failure — re-running or changing tack instead of accepting "none".', why: 'Empty ≠ error. The tool gave a valid empty result; the agent can\'t tell it apart from a real failure.', fix: 'Wrapper returns a typed <b>expected_empty</b> status; skill rule: "no matches is a valid answer, do not retry."' },
+  user_rejected:     { color: '#3f7d3f', what: 'A human declined the tool use. <b>Not floundering</b> — counted here only because it surfaces as an error result.', why: 'You said no (permission prompt, plan rejection). Working as intended.', fix: 'Nothing to fix. Useful as a denominator caveat: subtract these from the "real" error rate.' },
+  stale_edit:        { color: '#9a6a00', what: 'An Edit/Write failed its precondition — file not read first, or the match string no longer matches.', why: 'Pure agent discipline: edited before reading, or against a stale view of the file.', fix: 'Skill rule: "always Read before Edit; re-read after any external change." The single cheapest discipline win.' },
+  unknown_tool:      { color: '#b3261e', what: 'The agent called a tool that doesn\'t exist or isn\'t registered/loaded.', why: 'Invented a tool name, or an MCP tool exists without a tier/registration entry.', fix: 'Add the tier/RBAC entry; skill rule: search_tools before invoke_tool to discover what exists before calling it.' },
+  mcp_auth:          { color: '#b3261e', what: 'An MCP server rejected the call — token expired / needs re-authorization.', why: 'Auth lifecycle, not the agent. But blind retries against an expired token burn tokens.', fix: 'Centralize auth in a relay/gateway so refresh is handled once, off the agent\'s path.' },
+  mcp_transport:     { color: '#b3261e', what: 'MCP transport failure — HTTP POST to the server errored, or a stale handle (e.g. a closed browser tab).', why: 'Server/network/handle problem outside the model.', fix: 'Relay with retries + a typed status; skill rule: refresh the handle (tabs_context) before reuse.' },
+  connect_error:     { color: '#9a6a00', what: 'Could not reach an endpoint — server down or unreachable.', why: 'Upstream availability, not the agent.', fix: 'Health-check before the run; typed <b>blocked_missing_dependency</b> status so the agent stops, not spins.' },
+  binary_file:       { color: '#9a6a00', what: 'Tried to read a binary file (e.g. .docx/.pdf) with a text tool.', why: 'Agent assumed text; the file is binary.', fix: 'Skill rule: route .docx/.pdf/binary through the right extractor; wrapper that picks the tool by extension.' },
+  shell_failure:     { color: '#9a6a00', what: 'A raw shell command failed — bad syntax, wrong cwd, command not found, non-zero exit.', why: 'Agent invented a command shape or assumed repo/cwd state it never checked.', fix: 'Preflight cwd/repo state; <b>repo_*</b> wrappers with one canonical command shape. Promote the worst offenders to MCP.' },
+  aws_format:        { color: '#b3261e', what: 'An AWS CLI call was malformed — bad flags, missing profile/region, expired creds, wrong service syntax.', why: 'Raw `aws ...` through Bash is high-variance; the agent guesses option names and auth.', fix: 'An <b>aws_ssm_run</b> / typed AWS tool that handles auth + flags. This is the poster child for an MCP tool.' },
+  brain_validation:  { color: '#2f6690', what: 'A Brain/openbrain capture was rejected on validation.', why: 'Payload didn\'t match the capture schema; the agent built it by hand.', fix: 'A <b>brain_capture_validate</b> wrapper that shapes + validates before sending, returning a typed status.' },
+  webfetch_miss:     { color: '#9a6a00', what: 'A web fetch/search failed or came back empty — unreachable, blocked, rate-limited, or no results.', why: 'Often the open internet, not the agent — but blind retries burn tokens.', fix: 'Wrapper distinguishes transient (retry-once) from terminal (give up). Skill rule: cap fetch retries.' },
+  file_not_found:    { color: '#9a6a00', what: 'A path didn\'t exist — ENOENT, wrong relative path, stale location.', why: 'Agent assumed a file/dir without confirming it from a search or listing first.', fix: 'Preflight with a search/glob before read/edit; skill rule: never assume a path.' },
+  permission_denied: { color: '#b3261e', what: 'An operation was blocked — permission denied, EACCES, denied by policy/sandbox.', why: 'Agent attempted a privileged or out-of-scope action.', fix: 'Scope tools/permissions up front; surface the block as a typed <b>blocked</b> status, not a retry.' },
+  validation:        { color: '#b3261e', what: 'A tool rejected its input — schema/argument validation, missing required field.', why: 'Arguments were malformed or a required parameter was omitted.', fix: 'Typed wrappers with validated params; the contract lives in code, not in the prompt.' },
+  timeout:           { color: '#9a6a00', what: 'A call timed out.', why: 'Slow upstream, oversized operation, or a hung command.', fix: 'Bounded timeouts + a typed <b>timeout</b> status so the agent backs off deliberately.' },
+  real_error:        { color: '#b3261e', what: 'A genuine error that doesn\'t fit the other buckets.', why: 'Mixed bag — inspect the previews to see if a new class is hiding here.', fix: 'Read the samples; if a pattern repeats, give it its own class + fix.' },
 };
-function clsMeta(c) { return ERR_CLASSES[c] || { color: '#978f74', what: c, why: '—', fix: '—' }; }
+function clsMeta(c) { return ERR_CLASSES[c] || { color: '#8a857c', what: c, why: '—', fix: '—' }; }
 
 async function loadErrors() {
   state.errors = await fetchJson('/api/errors');
@@ -790,7 +805,7 @@ function renderErrors() {
   $('eErrored').textContent = fmtInt(d.erroredCalls);
   $('eTotal').textContent = fmtInt(d.totalCalls);
   $('eBurn').textContent = fmtTok(d.tokensOnErroredTurns);
-  $('eTop').textContent = d.classes.length ? d.classes[0].cls : '—';
+  $('errTop').textContent = d.classes.length ? d.classes[0].cls : '—';
   $('eSpirals').textContent = fmtInt(d.spirals.length);
   $('eEmpty').textContent = fmtInt(d.expectedEmpty);
 
@@ -864,7 +879,7 @@ function drawErrTrend(days) {
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
-  if (!days.length) { ctx.fillStyle = '#5d5742'; ctx.font = '10px "Spline Sans Mono"'; ctx.fillText('no data', 2, 14); return; }
+  if (!days.length) { ctx.fillStyle = '#8a857c'; ctx.font = '10px "Spline Sans Mono"'; ctx.fillText('no data', 2, 14); return; }
   const rates = days.map((d) => d.rate || 0);
   const maxR = Math.max(...rates, 0.01);
   const tot = days.reduce((a, d) => ({ e: a.e + d.errored, t: a.t + d.total }), { e: 0, t: 0 });
@@ -872,13 +887,14 @@ function drawErrTrend(days) {
   const n = days.length, slot = cssW / n, bw = Math.max(1.5, slot - 1.5);
   days.forEach((d, i) => {
     const h = (d.rate / maxR) * (cssH - 24);
-    ctx.fillStyle = d.rate > mean * 1.25 ? '#ff8c2b' : '#b07a00';
+    // days above 1.25× the mean carry the accent — the ones worth looking at
+    ctx.fillStyle = d.rate > mean * 1.25 ? '#b3261e' : '#c8c2b5';
     ctx.fillRect(i * slot, cssH - h - 14, bw, h);
   });
-  // mean line
+  // mean reference line — thin ink, labeled
   const my = cssH - 14 - (mean / maxR) * (cssH - 24);
-  ctx.strokeStyle = '#ffb000'; ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(0, my); ctx.lineTo(cssW, my); ctx.stroke(); ctx.setLineDash([]);
-  ctx.fillStyle = '#5d5742'; ctx.font = '10px "Spline Sans Mono"';
+  ctx.strokeStyle = '#1a1a1a'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(0, my); ctx.lineTo(cssW, my); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = '#8a857c'; ctx.font = '10px "Spline Sans Mono"';
   ctx.fillText(`daily error rate · peak ${(maxR * 100).toFixed(1)}% · mean ${(mean * 100).toFixed(1)}%`, 2, 10);
 }
 
@@ -1080,6 +1096,69 @@ function bindSkills() {
   };
   $('skList').addEventListener('click', pick);
   $('skCards').addEventListener('click', pick);
+}
+
+// ------------------------------------------------------------------ agents roster
+async function loadAgents() {
+  state.agents = await fetchJson('/api/agents');
+  renderAgents();
+}
+
+// element type → one quiet category color (research/builder/ops/orchestrator),
+// accent reserved for the orchestrators that spawn other agents.
+const EL_COLOR = { research: '#2f6690', builder: '#3f7d3f', ops: '#9a6a00', orchestrator: '#b3261e', mixed: '#8a857c' };
+
+function relTime(ts) {
+  if (!ts) return 'never';
+  const s = Math.max(0, (Date.now() - ts) / 1000);
+  if (s < 90) return 'just now';
+  const m = s / 60; if (m < 60) return Math.round(m) + 'm ago';
+  const h = m / 60; if (h < 24) return Math.round(h) + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+}
+
+function renderAgents() {
+  const d = state.agents;
+  if (!d) return;
+  const c = d.counts || {};
+  $('agTotal').textContent = fmtInt(c.total || 0);
+  $('agDefined').textContent = fmtInt(c.defined || 0);
+  $('agActive').textContent = fmtInt(c.active || 0);
+  $('agWild').textContent = fmtInt(c.wild || 0);
+  $('agDormant').textContent = fmtInt(c.dormant || 0);
+  $('agRuns').textContent = fmtInt(d.totalRuns || 0);
+
+  const cards = (d.roster || []).map((a) => {
+    const el = EL_COLOR[a.element] || EL_COLOR.mixed;
+    const errPct = a.calls ? (a.errorRate * 100).toFixed(a.errorRate >= 0.1 ? 0 : 1) + '%' : '—';
+    const errWarn = a.errorRate > 0.05 ? ' warn' : '';
+    const skills = (a.skills || []).map((s) => `<span class="acard-skill">${escapeHtml(s)}</span>`).join('');
+    const tools = (a.topTools || []).map((t) => `${escapeHtml(t.tool)}·${t.count}`).join('  ');
+    const topProj = (a.projects || [])[0];
+    const ownerHtml = a.owner ? `owner <b>${escapeHtml(a.owner)}</b>` : (a.defined ? 'owner <b>—</b>' : 'no definition');
+    const model = (a.model || '').replace('claude-', '').replace(/-\d{8}$/, '');
+    return `<div class="acard ${a.status}" style="--el:${el}">
+      <div class="acard-top">
+        <span class="acard-name" title="${escapeHtml(a.name)}">${escapeHtml(a.name)}</span>
+        <span class="acard-lvl">Lv${a.level}</span>
+        <span class="acard-status ${a.status}">${a.status}</span>
+      </div>
+      <div class="acard-el">${escapeHtml(a.element)}${model ? ' · ' + escapeHtml(model) : ''} · seen ${relTime(a.lastTs)}</div>
+      <div class="acard-desc">${escapeHtml(a.description || 'no description')}</div>
+      <div class="acard-stats">
+        <div class="acard-stat"><span class="sv">${fmtInt(a.runs)}</span><span class="sk">runs</span></div>
+        <div class="acard-stat"><span class="sv">${fmtTok(a.tokens)}</span><span class="sk">out tok</span></div>
+        <div class="acard-stat"><span class="sv${errWarn}">${errPct}</span><span class="sk">err rate</span></div>
+      </div>
+      ${skills ? `<div class="acard-skills">${skills}</div>` : ''}
+      ${tools ? `<div class="acard-tools" title="${escapeHtml(tools)}">${tools}</div>` : ''}
+      <div class="acard-foot">
+        <span class="acard-owner">${ownerHtml}</span>
+        ${topProj ? `<span class="acard-proj" title="ran in ${escapeHtml(topProj.project)}">${escapeHtml(topProj.project)}${a.projects.length > 1 ? ` +${a.projects.length - 1}` : ''}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  $('agentsGrid').innerHTML = cards || '<div class="agents-empty">no agents yet — run a subagent (Task/Agent/Explore) and it appears here</div>';
 }
 
 // ------------------------------------------------------------------ inspector

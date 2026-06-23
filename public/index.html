@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CC·SCOPE — Claude Code flight recorder</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230b0a08'/%3E%3Ccircle cx='8' cy='8' r='5' fill='none' stroke='%23ffb000' stroke-width='1.5'/%3E%3Ccircle cx='8' cy='8' r='1.6' fill='%23ffb000'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23fafaf7'/%3E%3Ccircle cx='8' cy='8' r='5' fill='none' stroke='%231a1a1a' stroke-width='1.5'/%3E%3Ccircle cx='8' cy='8' r='1.6' fill='%23b3261e'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;600;800&family=Spline+Sans+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Spline+Sans+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -21,6 +21,7 @@
     </div>
     <div class="viewtabs" id="viewtabs">
       <button data-view="session" class="on">session</button>
+      <button data-view="agents">agents</button>
       <button data-view="errors">flounder</button>
       <button data-view="feed">live feed</button>
       <button data-view="skills">skills</button>
@@ -232,7 +233,7 @@
     <div class="m"><span class="v" id="eErrored">0</span><span class="k">errored calls</span></div>
     <div class="m"><span class="v" id="eTotal">0</span><span class="k">total calls</span></div>
     <div class="m accent3"><span class="v" id="eBurn">—</span><span class="k">out-tok on errored turns</span></div>
-    <div class="m"><span class="v" id="eTop">—</span><span class="k">top failure class</span></div>
+    <div class="m"><span class="v" id="errTop">—</span><span class="k">top failure class</span></div>
     <div class="m"><span class="v" id="eSpirals">0</span><span class="k">retry spirals</span></div>
     <div class="m"><span class="v" id="eEmpty">0</span><span class="k">"empty = expected"</span></div>
   </section>
@@ -240,7 +241,7 @@
   <section class="panel reveal" id="errTrendPanel">
     <div class="panel-head"><h2>error rate over time</h2><span class="sub" id="eTrendDelta">—</span></div>
     <canvas id="errTrend" height="120"></canvas>
-    <div class="daily-note" style="padding-top:0"><p class="muted">Daily tool-call error rate (bar height) — the before/after loop: ship a discipline skill, watch the class drop. Amber line = overall mean.</p></div>
+    <div class="daily-note" style="padding-top:0"><p class="muted">Daily tool-call error rate (bar height) — the before/after loop: ship a discipline skill, watch the class drop. Bars above 1.25× the mean carry the accent; the dashed line is the overall mean.</p></div>
   </section>
 
   <div class="ob-layout">
@@ -313,6 +314,30 @@
   </section>
 </section>
 
+<section id="agentsView" class="view-agents">
+  <section class="strip reveal" id="agentsHeadline">
+    <div class="m"><span class="v" id="agTotal">0</span><span class="k">agents tracked</span></div>
+    <div class="m"><span class="v" id="agDefined">0</span><span class="k">defined</span></div>
+    <div class="m accent2"><span class="v" id="agActive">0</span><span class="k">active now</span></div>
+    <div class="m accent3"><span class="v" id="agWild">0</span><span class="k">wild · undefined</span></div>
+    <div class="m"><span class="v" id="agDormant">0</span><span class="k">dormant</span></div>
+    <div class="m"><span class="v" id="agRuns">0</span><span class="k">total runs</span></div>
+  </section>
+
+  <section class="panel reveal" id="agentsPanel">
+    <div class="panel-head"><h2>agent roster</h2><span class="sub">one card per agent · definition joined to live runs</span></div>
+    <div id="agentsGrid" class="agents-grid"></div>
+  </section>
+
+  <section class="panel reveal">
+    <div class="panel-head"><h2>reading this</h2></div>
+    <div class="daily-note">
+      <p>Each card is one agent type, joined on its name: the <b>definition</b> (role, model, owner from git) on top, the <b>live runs</b> Claude Code recorded underneath. Owner is the last git author of the agent file; it reads blank when the definition lives outside a git repo.</p>
+      <p><span class="burn-k">active</span> ran in the last 2 minutes · <span style="color:var(--ink-faint)">idle</span> has run before · <span style="color:var(--orange)">wild</span> ran but has no definition file · <span style="color:var(--ink-faint)">dormant</span> is defined but never run. Level grows with run count. The element type is the agent's dominant tool category: research, builder, ops, or orchestrator.</p>
+    </div>
+  </section>
+</section>
+
 <div id="inspector" class="inspector" hidden>
   <div class="inspector-card">
     <div class="inspector-head">
@@ -332,7 +357,7 @@
 <footer>
   <span>proxy <code>http://127.0.0.1:4000</code> → <code>api.anthropic.com</code></span>
   <span id="wireCount">0 wire captures</span>
-  <span>run via <code>ccspy</code> · transcripts tailed from <code>~/.claude/projects</code></span>
+  <span id="transcriptRoot">transcripts tailed from <code>CCSCOPE_TRANSCRIPT_ROOT</code> or <code>~/.claude/projects</code></span>
 </footer>
 
 <script src="app.js"></script>

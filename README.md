@@ -56,6 +56,7 @@ Run the server standalone: `node server.js` (env: `CCSCOPE_PROXY_PORT`, `CCSCOPE
 Header tabs:
 
 - **Session** (`/`) — per-session analytics: autonomy banner, gallery, inspector, tool counts, tokens. Every session (proxied or not).
+- **Agents** — a roster of every agent that has run: definition joined to live runs, with skills used, tool mix, error rate, and owner (below).
 - **Flounder** — tool-call failure taxonomy + error-rate-over-time (below).
 - **Live feed** — universal, hook-fed activity stream across every session/tool (below).
 - **Skills** — portable skill inventory across tools + gaps to build (below).
@@ -76,7 +77,7 @@ Claude Code housekeeping turns (title generation, quota pings — they offer zer
 ## Dashboard
 
 - **Autonomy banner** — turns since last human input, max streak, sub-agent spawns, top repeated identical call. The "Ralph loop detector": a true batch loop shows as a hot repeated-call counter; a normal agentic run shows as a high autonomous-turn streak with varied tool calls.
-- **Session gallery** — every session as a card with a **barcode strip**: one bar per turn (amber = tool call, green = answer, cyan = sub-agent, orange = tool error, red = API error) and a tick for each human input. Cards are grouped into tiers — **Marathon** (60+ turns), **Autonomous** (15+ unbroken chain — the loop-watch tier), **Mixed** (human-guided), **Quick**. Each card shows `N turns · chain K · $cost · date`, where *chain* is the longest run with no human input. A long mostly-amber barcode = a long autonomous run. Click a card to select it (updates the panels below); click a bar to open that turn in the inspector; hover for turn type.
+- **Session gallery** — every session as a card with a **barcode strip**: one bar per turn (dark gray = tool call, light gray = answer, slate = sub-agent, amber = tool error, red = API error) and a tick for each human input. Cards are grouped into tiers — **Marathon** (60+ turns), **Autonomous** (15+ unbroken chain — the loop-watch tier), **Mixed** (human-guided), **Quick**. Each card shows `N turns · chain K · $cost · date`, where *chain* is the longest run with no human input. A long mostly-amber barcode = a long autonomous run. Click a card to select it (updates the panels below); click a bar to open that turn in the inspector; hover for turn type.
 - **Inspector** — overview / raw request (system prompt, full context) / reconstructed response (thinking, text, tool_use) / raw wire record.
 - **Tool calls** — counts per tool; repeated-identical-call list (hash of name+input).
 - **Tokens** — per-turn output bars, cumulative usage, cache-hit ratio, estimated cost (edit `public/pricing.json`).
@@ -113,6 +114,10 @@ The `/live` console needs the proxy. **Live feed** is fed by Claude Code **hooks
 ## Skills — portable inventory
 
 `SKILL.md` (Agent Skills) is read by Claude Code, Codex, and Claude Cowork alike. **Skills** inventories yours across those tools — per-tool presence (`ok` / `staged` / `drift` / `missing`) and, cross-referenced with Flounder, which discipline skills you still *need*. Set `CCSCOPE_SKILLS_ROOT` to a canonical skills repo (a folder of `<name>/SKILL.md`) to track coverage against it; otherwise it scans the tools' skill dirs directly.
+
+## Agents — the roster
+
+Every agent that runs leaves a trail: Claude Code records each sub-agent under `~/.claude/projects/*/*/subagents/`. **Agents** joins those live runs to the agent **definitions** on disk (`~/.claude/agents` and per-project `.claude/agents`) on the agent name. Each card shows what the agent is for, its model, the **owner** (the last git author of the definition file), and from the runs: run count, output tokens, error rate, last-seen, the skills it invoked, its top tools, and which projects it worked in. Status is `active` (ran in the last 2 minutes), `idle`, `wild` (ran but has no definition file), or `dormant` (defined but never run). A level grows with run count and an element type names the dominant tool category (research / builder / ops / orchestrator).
 
 ## Digest
 
